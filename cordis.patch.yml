@@ -1,0 +1,4 @@
+# Placeholder bundle patch: activating the bundle loads the two halves above.
+- insert:
+    - id: ui-controller
+      name: 'dsh-ui-controller'
