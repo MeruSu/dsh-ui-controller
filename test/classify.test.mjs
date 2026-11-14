@@ -589,7 +589,15 @@ test('restoring defaults drops every mark, binding and preset', () => {
   const dirty = { ...api.defaultSettings(), hidden: { 'conversation.view': { a: true } }, presets: { p: { hidden: {}, visualOrder: {} } } };
   globalThis.localStorage.setItem(api.SETTINGS_KEY, JSON.stringify(dirty));
   const fresh = api.defaultSettings();
-  assert.deepEqual(fresh, { version: api.SETTINGS_VERSION, hidden: {}, locators: {}, visualOrder: {}, presets: {}, activePreset: null });
+  assert.deepEqual(fresh, {
+    version: api.SETTINGS_VERSION,
+    hidden: {},
+    locators: {},
+    visualOrder: {},
+    presets: {},
+    activePreset: null,
+    nav: { follow: true, state: 'expanded' },
+  });
   assert.equal(api.SETTINGS_KEY, 'dsh.uiController.settings.v1');
 });
 
@@ -886,9 +894,177 @@ test('the static fallback still renders slot rows', () => {
 }
 //#endregion
 
+/* ------------------------------------------------- settings rail (task-65) */
+
+/**
+ * Settings-modal stub: one panel, a nav with two labelled buttons, and the
+ * host sidebar reading the rail threshold is keyed on.
+ */
+function railDoc(options = {}) {
+  const collapsed = options.collapsed === true;
+  const sidebarWidth = options.sidebarWidth === undefined ? 280 : options.sidebarWidth;
+  const buttons = [];
+  const nav = element('nav');
+  for (const label of options.labels ?? ['Slots', 'Presets']) {
+    const button = element('button');
+    const icon = element('span');
+    const text = element('span');
+    text.textContent = label;
+    button.appendChild(icon);
+    button.appendChild(text);
+    button.querySelectorAll = (selector) => (selector === 'span' ? button.children : []);
+    buttons.push(button);
+    nav.appendChild(button);
+  }
+  const panel = element('div');
+  panel.appendChild(nav);
+  panel.querySelector = (selector) => (selector === 'nav' ? nav : null);
+  nav.querySelectorAll = (selector) => (selector === 'button' ? buttons : []);
+  const sidebar = { getBoundingClientRect: () => ({ width: sidebarWidth }) };
+  return {
+    doc: {
+      querySelector: (selector) => {
+        if (selector === api.PANEL_SELECTOR) return panel;
+        if (selector === '[data-sidebar-collapsed]') return collapsed === true ? element('div') : null;
+        if (selector === '[data-slot="sidebar"]') return sidebar;
+        return null;
+      },
+      querySelectorAll: (selector) => (selector === api.PANEL_SELECTOR ? [panel] : []),
+    },
+    panel,
+    nav,
+    buttons,
+  };
+}
+
+test('the three rail states own their grid track', () => {
+  assert.equal(api.navColumnsOf('expanded'), '188px minmax(0, 1fr)');
+  assert.equal(api.navColumnsOf('rail'), '56px minmax(0, 1fr)', 'rail is a 56px first track');
+  assert.equal(api.navColumnsOf('hidden'), '0px minmax(0, 1fr)', 'hidden is a zero first track');
+  assert.equal(api.NAV_CSS.includes('grid-template-columns:56px minmax(0, 1fr) !important'), true);
+  assert.equal(api.NAV_CSS.includes('grid-template-columns:0px minmax(0, 1fr) !important'), true);
+  assert.equal(
+    api.NAV_CSS.includes('grid-template-columns:188px'),
+    false,
+    'the full state claims no track, so a wider host rail is inherited instead of pinned',
+  );
+  assert.equal(api.navWidthOf('nonsense'), 188, 'an unknown state falls back to full');
+});
+
+test('following the host sidebar ignores the stored three-way choice', () => {
+  const following = { ...api.defaultSettings(), nav: { follow: true, state: 'hidden' } };
+  assert.equal(
+    api.resolveNavState(following, railDoc({ collapsed: true }).doc),
+    'rail',
+    'a collapsed host turns the rail on, even though hidden is stored',
+  );
+  assert.equal(
+    api.resolveNavState(following, railDoc({ collapsed: false }).doc),
+    'expanded',
+    'an open host expands it, even though hidden is stored',
+  );
+  const loose = { ...api.defaultSettings(), nav: { follow: false, state: 'hidden' } };
+  assert.equal(api.resolveNavState(loose, railDoc({ collapsed: true }).doc), 'hidden', 'with following off the stored state wins');
+  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 56 }).doc), true, 'a 56px host sidebar is a rail');
+  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 64 }).doc), true, 'the threshold includes 64');
+  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 65 }).doc), false, '65px is not a rail');
+  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 0 }).doc), false, 'zero width is absent, not collapsed');
+});
+
+test('the rail is painted on the panel and taken back off', () => {
+  const harness = railDoc();
+  const rail = api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'rail' } });
+  assert.equal(rail, 'rail');
+  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'rail');
+  assert.equal(harness.buttons[0].getAttribute('title'), 'Slots', 'the label becomes a tooltip');
+  assert.equal(harness.buttons[1].getAttribute('title'), 'Presets');
+  api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'expanded' } });
+  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'expanded');
+  assert.equal(harness.buttons[0].getAttribute('title'), null, 'expanding releases the tooltips');
+  api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'hidden' } });
+  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'hidden');
+  api.clearNavState(harness.doc);
+  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), null, 'unloading leaves no attribute behind');
+  assert.equal(api.applyNavStateTo(null, api.defaultSettings()), 'expanded', 'no document, no crash');
+});
+
+test('the nav field is sanitised and does not disturb the rest of the settings', () => {
+  resetStorage();
+  const base = api.defaultSettings();
+  assert.deepEqual(base.nav, { follow: true, state: 'expanded' });
+  assert.equal(base.version, 1, 'a new field does not bump the settings version');
+  assert.deepEqual(api.sanitizeNav({ follow: 'yes', state: 'sideways' }), { follow: true, state: 'expanded' });
+  assert.deepEqual(api.sanitizeNav({ follow: false, state: 'rail' }), { follow: false, state: 'rail' });
+  assert.deepEqual(api.sanitizeNav(null), { follow: true, state: 'expanded' });
+  const clean = api.sanitizeSettings({ nav: { follow: false, state: 'hidden' }, hidden: { 'conversation.view': { a: true } } });
+  assert.deepEqual(clean.nav, { follow: false, state: 'hidden' });
+  assert.deepEqual(clean.hidden, { 'conversation.view': { a: true } }, 'the existing fields survive a new one');
+  assert.deepEqual(clean.visualOrder, {}, 'and nothing else is invented');
+});
+
+test('the page carries a rail group that is inert while following', () => {
+  resetStorage();
+  const ctx = fakeCtx({});
+  api.apply(ctx.scope, {});
+  const slot = ctx.registered[0].component({ t: api.translator('en') });
+  const page = typeof slot.type === 'function' ? slot.type({ ...slot.props, t: api.translator('en') }) : slot;
+  const gather = (item, into) => {
+    if (item === null || item === undefined || typeof item !== 'object') return into;
+    into.push(item);
+    for (const child of Array.isArray(item.props?.children) ? item.props.children.flat(3) : []) gather(child, into);
+    return into;
+  };
+  const nodes = gather(page, []);
+  assert.equal(nodes.filter((item) => item.props?.['data-uic-nav-section'] === '1').length, 1, 'exactly one rail group');
+  const follow = nodes.filter((item) => item.props?.['data-uic-nav-follow'] !== undefined);
+  assert.equal(follow.length, 1);
+  assert.equal(follow[0].props['data-uic-nav-follow'], 'true', 'following is the default');
+  const picks = nodes.filter((item) => item.props?.['data-uic-nav-pick'] !== undefined);
+  assert.deepEqual(picks.map((item) => item.props['data-uic-nav-pick']), ['expanded', 'rail', 'hidden']);
+  assert.equal(picks.every((item) => item.props.disabled === true), true, 'the three sit inert while following');
+  const now = nodes.filter((item) => item.props?.['data-uic-nav-now'] !== undefined);
+  assert.equal(now.length, 1);
+  assert.equal(now[0].props['data-uic-nav-now'], 'expanded');
+  for (const dispose of ctx.disposes) dispose();
+});
+
+test('picking a rail state stops following, and the toggle writes it back', () => {
+  resetStorage();
+  const ctx = fakeCtx({});
+  api.apply(ctx.scope, {});
+  const render = () => {
+    const slot = ctx.registered[0].component({ t: api.translator('en') });
+    const page = typeof slot.type === 'function' ? slot.type({ ...slot.props, t: api.translator('en') }) : slot;
+    const gather = (item, into) => {
+      if (item === null || item === undefined || typeof item !== 'object') return into;
+      into.push(item);
+      for (const child of Array.isArray(item.props?.children) ? item.props.children.flat(3) : []) gather(child, into);
+      return into;
+    };
+    return gather(page, []);
+  };
+
+  const railButton = render().find((item) => item.props?.['data-uic-nav-pick'] === 'rail');
+  railButton.props.onClick();
+  assert.deepEqual(globalThis.window.__UI_CONTROLLER__.settings.get().nav, { follow: false, state: 'rail' }, 'a click both stops following and records the state');
+
+  const nodes = render();
+  const follow = nodes.find((item) => item.props?.['data-uic-nav-follow'] !== undefined);
+  assert.equal(follow.props.checked, false, 'the switch now shows following off');
+  assert.equal(follow.props['data-uic-nav-follow'], 'false');
+  const picks = nodes.filter((item) => item.props?.['data-uic-nav-pick'] !== undefined);
+  assert.equal(picks.every((item) => item.props.disabled === undefined || item.props.disabled === false), true, 'the three are live now');
+  assert.equal(picks.find((item) => item.props['data-uic-nav-pick'] === 'rail').props['data-on'], 'true', 'rail is the shown choice');
+
+  follow.props.onChange({ target: { checked: true } });
+  assert.deepEqual(globalThis.window.__UI_CONTROLLER__.settings.get().nav, { follow: true, state: 'rail' }, 'turning following back on keeps the stored choice');
+  for (const dispose of ctx.disposes) dispose();
+});
+
 console.log('');
 if (failed > 0) {
   console.log('FAILED — ' + failed + ' of ' + groups + ' groups');
   process.exit(1);
 }
 console.log('PASS — ' + groups + ' groups');
+

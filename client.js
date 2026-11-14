@@ -27,7 +27,7 @@
  * slots sort by `priority → order`, everything else by `priority` alone.
  */
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 const NS = 'uiController';
 const SECTION_ID = 'ui-controller';
@@ -76,6 +76,9 @@ const PAGE_CSS = [
   '.uic-filterGroup{display:inline-flex;gap:2px}',
   '.uic-filter{height:26px;padding:0 8px;border-radius:6px;font-size:11px;cursor:pointer;border:1px solid var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-secondary)}',
   '.uic-filter[data-on="true"]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
+  '.uic-navSection{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.uic-navFollow{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}',
+  '.uic-navStates{display:flex;gap:6px;flex-wrap:wrap}',
   '.uic-zone{border-top:.5px solid var(--dsw-alias-border-l2);padding:2px 0}',
   '.uic-zoneHead{display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 2px;border:0;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;font-size:12px;font-weight:600}',
   '.uic-zoneName{flex:none}',
@@ -99,6 +102,100 @@ const PAGE_CSS = [
   '.uic-entryActions{display:flex;align-items:center;gap:4px;justify-self:end}',
   '@container (max-width:620px){.uic-slotHead{grid-template-columns:14px 12px minmax(0,1fr) 46px minmax(0,1fr);height:auto;min-height:44px}.uic-slotHead .uic-kind{display:none}.uic-entry{grid-template-columns:minmax(0,1fr) auto auto;min-height:44px}.uic-entry .uic-entryLive,.uic-entry .uic-num{display:none}}',
 ].join('\n');
+
+/* ------------------------------------------------- settings page left rail */
+
+const NAV_ATTR = 'data-uic-nav';
+const PANEL_SELECTOR = 'div[data-shortcut-modal="settings"]';
+const PANEL_NAV_STATES = ['expanded', 'rail', 'hidden'];
+const NAV_WIDTHS = { expanded: 188, rail: 56, hidden: 0 };
+const HOST_SIDEBAR_RAIL_MAX = 64;
+
+/** Width of the settings rail, in px, for one of the three states. */
+function navWidthOf(state) {
+  return hasOwn(NAV_WIDTHS, state) ? NAV_WIDTHS[state] : NAV_WIDTHS.expanded;
+}
+
+/**
+ * First grid track of the settings modal.
+ *
+ * Longhand on purpose: the host's shorthand also carries grid area names that
+ * are hashed per build, so copying the whole declaration would break on the
+ * next release. Only the first track belongs to us.
+ */
+function navColumnsOf(state) {
+  return navWidthOf(state) + 'px minmax(0, 1fr)';
+}
+
+/*
+ * Collapsing only means something while the host draws the rail as a vertical
+ * column; below 768px it becomes a horizontal tab strip, where hiding the
+ * labels would leave an unlabelled bar. Same breakpoint the host uses.
+ *
+ * Only the two collapsed states claim a track. Leaving `expanded` untouched
+ * means the host keeps ownership of its own width: if a later build widens the
+ * rail, we inherit it instead of pinning an old number.
+ */
+const NAV_CSS = [
+  '@media (min-width:768px){',
+  ...PANEL_NAV_STATES.filter((state) => state !== 'expanded').map(
+    (state) =>
+      PANEL_SELECTOR + '[' + NAV_ATTR + '="' + state + '"]{grid-template-columns:' + navColumnsOf(state) + ' !important}',
+  ),
+  PANEL_SELECTOR + '[' + NAV_ATTR + '="rail"] > nav{padding:10px 6px 0;overflow:hidden}',
+  PANEL_SELECTOR + '[' + NAV_ATTR + '="rail"] > nav button{justify-content:center;padding:8px 0;gap:0}',
+  PANEL_SELECTOR +
+    '[' +
+    NAV_ATTR +
+    '="rail"] > nav button > span:nth-child(2){position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}',
+  PANEL_SELECTOR + '[' + NAV_ATTR + '="hidden"]{overflow:hidden}',
+  PANEL_SELECTOR + '[' + NAV_ATTR + '="hidden"] > nav{display:none}',
+  '}',
+].join('\n');
+
+/** Only the three stored states are meaningful; anything else is "expanded". */
+function stateOr(value) {
+  return PANEL_NAV_STATES.includes(value) ? value : 'expanded';
+}
+
+/**
+ * Whether the host's own session sidebar is currently a rail.
+ *
+ * Two readings, both taken from the shipped behaviour rather than invented
+ * here: an explicit `data-sidebar-collapsed` marker anywhere in the document,
+ * or a sidebar element measured between 1px and 64px. The three sidebar
+ * selectors are the ones the shipped code probes, in the same order; a
+ * different threshold would make the two disagree the moment the host changes
+ * its width.
+ */
+function hostSidebarCollapsed(doc) {
+  if (doc === null || doc === undefined || typeof doc.querySelector !== 'function') return false;
+  try {
+    if (doc.querySelector('[data-sidebar-collapsed]') !== null) return true;
+    const sidebar =
+      doc.querySelector('[data-slot="sidebar"]') ??
+      doc.querySelector('div[class*="sidebarCol"]') ??
+      doc.querySelector('div[class*="hHd-Xa_root"]');
+    if (sidebar === null || sidebar === undefined || typeof sidebar.getBoundingClientRect !== 'function') return false;
+    const measured = sidebar.getBoundingClientRect().width;
+    return Number.isFinite(measured) && measured > 0 && measured <= HOST_SIDEBAR_RAIL_MAX;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Which of the three states applies right now.
+ *
+ * `follow` on (the default) means the rail mirrors the host sidebar, and the
+ * stored three-way choice is deliberately not read at all — that is the whole
+ * point of following.
+ */
+function resolveNavState(settings, doc) {
+  const nav = isPlainObject(settings) && isPlainObject(settings.nav) ? settings.nav : {};
+  if (nav.follow !== false) return stateOr(hostSidebarCollapsed(doc) ? 'rail' : 'expanded');
+  return stateOr(nav.state);
+}
 
 const PRESET_NAME_MAX = 40;
 const SELECTOR_MAX = 240;
@@ -256,6 +353,7 @@ function defaultSettings() {
     visualOrder: {},
     presets: {},
     activePreset: null,
+    nav: { follow: true, state: 'expanded' },
   };
 }
 
@@ -343,6 +441,15 @@ function sanitizePresets(raw) {
   return next;
 }
 
+/** `follow` defaults to on; the three-way choice only matters when it is off. */
+function sanitizeNav(raw) {
+  const next = { follow: true, state: 'expanded' };
+  if (isPlainObject(raw) === false) return next;
+  if (raw.follow === false) next.follow = false;
+  if (PANEL_NAV_STATES.includes(raw.state)) next.state = raw.state;
+  return next;
+}
+
 function sanitizeSettings(raw) {
   const base = defaultSettings();
   if (isPlainObject(raw) === false) return base;
@@ -352,6 +459,7 @@ function sanitizeSettings(raw) {
   next.visualOrder = sanitizeVisualOrder(raw.visualOrder ?? raw.order);
   next.presets = sanitizePresets(raw.presets);
   next.activePreset = typeof raw.activePreset === 'string' && hasOwn(next.presets, raw.activePreset) ? raw.activePreset : null;
+  next.nav = sanitizeNav(raw.nav);
   return next;
 }
 
@@ -439,6 +547,7 @@ function patchSettings(patch) {
     visualOrder,
     presets: isPlainObject(patch.presets) ? patch.presets : base.presets,
     activePreset: hasOwn(patch, 'activePreset') ? patch.activePreset : base.activePreset,
+    nav: { ...(isPlainObject(base.nav) ? base.nav : {}), ...(isPlainObject(patch.nav) ? patch.nav : {}) },
   });
 }
 
@@ -974,6 +1083,14 @@ const ZH = {
   'settings.filter.unbound': '未绑定',
   'settings.filterCount': '{slots} 槽 · {entries} entry',
   'settings.noMatch': '没有匹配的座位。',
+  'settings.nav.title': '设置页左栏',
+  'settings.nav.hint': '只改设置页左侧分类栏的宽度：展开、56px 图标栏，或收起。键盘顺序与 DOM 顺序都不变。',
+  'settings.nav.follow': '跟随宿主侧栏',
+  'settings.nav.followOn': '跟随宿主侧栏时这三档不生效，先关掉跟随。',
+  'settings.nav.state.expanded': '展开',
+  'settings.nav.state.rail': '图标栏',
+  'settings.nav.state.hidden': '收起',
+  'settings.nav.now': '当前选择：{width}px。',
 };
 
 const EN = {
@@ -1028,6 +1145,14 @@ const EN = {
   'settings.filter.unbound': 'Unbound',
   'settings.filterCount': '{slots} slots · {entries} entries',
   'settings.noMatch': 'No slot matches.',
+  'settings.nav.title': 'Settings rail',
+  'settings.nav.hint': 'Only the width of the settings rail changes: full, a 56px icon rail, or collapsed. Keyboard and DOM order never change.',
+  'settings.nav.follow': 'Follow the host sidebar',
+  'settings.nav.followOn': 'While following, these three do not apply — turn following off first.',
+  'settings.nav.state.expanded': 'Full',
+  'settings.nav.state.rail': 'Icon rail',
+  'settings.nav.state.hidden': 'Collapsed',
+  'settings.nav.now': 'Selected: {width}px.',
 };
 
 const DICTS = { zh: ZH, en: EN };
@@ -1061,12 +1186,18 @@ function node(tagName, props, children) {
 
 function injectStyle(doc) {
   if (doc === null || doc === undefined) return;
+  const css = HIDE_CSS + '\n' + PAGE_CSS + '\n' + NAV_CSS;
   const existing = typeof doc.getElementById === 'function' ? doc.getElementById(STYLE_ID) : null;
-  if (existing !== null && existing !== undefined) return;
+  /* A reloaded plugin can find the stylesheet its previous instance left behind.
+     Rewriting it keeps the three rule groups from drifting apart. */
+  if (existing !== null && existing !== undefined) {
+    if (existing.textContent !== css) existing.textContent = css;
+    return;
+  }
   const style = doc.createElement('style');
   style.id = STYLE_ID;
   style.setAttribute('data-uic', 'style');
-  style.textContent = HIDE_CSS + '\n' + PAGE_CSS;
+  style.textContent = css;
   const head = doc.head ?? doc.documentElement;
   if (head !== null && head !== undefined) head.appendChild(style);
 }
@@ -1075,6 +1206,75 @@ function removeStyle(doc) {
   if (doc === null || doc === undefined) return;
   const existing = typeof doc.getElementById === 'function' ? doc.getElementById(STYLE_ID) : null;
   if (existing !== null && existing !== undefined && typeof existing.remove === 'function') existing.remove();
+}
+
+/* ------------------------------------------------------------- nav DOM */
+
+/** Buttons we put a `title` on, so leaving rail state can undo exactly those. */
+const navTitled = [];
+
+/**
+ * Put captured `title` attributes back, then forget them.
+ *
+ * `keep` is the set of buttons that should stay titled: the two-second paint
+ * pass calls this with the buttons it just found, so a host re-render that
+ * replaces the nav nodes drops the stale entries and nothing is written twice.
+ */
+function releaseNavTitles(keep) {
+  for (let index = navTitled.length - 1; index >= 0; index -= 1) {
+    const item = navTitled[index];
+    if (keep !== undefined && keep.has(item.element) === true) continue;
+    if (item.previous === null) item.element.removeAttribute('title');
+    else item.element.setAttribute('title', item.previous);
+    navTitled.splice(index, 1);
+  }
+}
+
+/**
+ * Paint one of the three states onto the settings modal.
+ *
+ * Only the panel attribute and a handful of `title` attributes are written:
+ * the nav markup belongs to the host and is never moved, re-registered or
+ * re-rendered by us. Rail state hides the labels with CSS, so nothing has to
+ * be remembered across a host re-render beyond the attribute itself. Called
+ * every two seconds, so every write is guarded — an unchanged attribute or
+ * tooltip is left alone instead of being re-set in a loop.
+ */
+function applyNavStateTo(doc, settings) {
+  const state = resolveNavState(settings, doc);
+  if (doc === null || doc === undefined || typeof doc.querySelector !== 'function') return state;
+  const panel = doc.querySelector(PANEL_SELECTOR);
+  if (panel === null || panel === undefined) {
+    releaseNavTitles();
+    return state;
+  }
+  if (panel.getAttribute(NAV_ATTR) !== state) panel.setAttribute(NAV_ATTR, state);
+  const nav = state === 'rail' && typeof panel.querySelector === 'function' ? panel.querySelector('nav') : null;
+  if (nav === null || nav === undefined || typeof nav.querySelectorAll !== 'function') {
+    releaseNavTitles();
+    return state;
+  }
+  const wanted = new Set();
+  for (const button of Array.from(nav.querySelectorAll('button'))) {
+    const spans = typeof button.querySelectorAll === 'function' ? Array.from(button.querySelectorAll('span')) : [];
+    const label = elementText(spans.length > 1 ? spans[1] : button);
+    if (label === '') continue;
+    wanted.add(button);
+    if (button.getAttribute('title') === label) continue;
+    if (navTitled.some((item) => item.element === button) === false) {
+      navTitled.push({ element: button, previous: button.getAttribute('title') });
+    }
+    button.setAttribute('title', label);
+  }
+  releaseNavTitles(wanted);
+  return state;
+}
+
+/** Take the attribute and every `title` back off, e.g. when the plugin unloads. */
+function clearNavState(doc) {
+  releaseNavTitles();
+  if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return;
+  for (const panel of Array.from(doc.querySelectorAll(PANEL_SELECTOR))) panel.removeAttribute(NAV_ATTR);
 }
 
 /* ---------------------------------------------------------------- grouping */
@@ -1527,6 +1727,54 @@ function settingsPage(props) {
 
   const presetNames = Object.keys(state.presets).sort();
 
+  const navStored = isPlainObject(state.nav) ? state.nav : {};
+  const followOn = navStored.follow !== false;
+  const navChoice = PANEL_NAV_STATES.includes(navStored.state) ? navStored.state : 'expanded';
+  /* While following, the three buttons are inert, so the selected mark and the
+     width line show what the rail is actually doing right now. */
+  const navNow = followOn ? resolveNavState({ nav: navStored }, typeof document === 'undefined' ? null : document) : navChoice;
+  const navEdit = (change) => commit({ ...state, nav: { ...navStored, ...change } });
+
+  const navBlock = node('div', { key: 'nav', className: 'uic-navSection', 'data-uic-nav-section': '1' }, [
+    node('h3', { key: 'h', className: 'uic-h3' }, t('settings.nav.title')),
+    node('p', { key: 'hint', className: 'uic-dim' }, t('settings.nav.hint')),
+    node('label', { key: 'follow', className: 'uic-navFollow' }, [
+      node('input', {
+        key: 'box',
+        type: 'checkbox',
+        'data-uic-nav-follow': followOn ? 'true' : 'false',
+        checked: followOn,
+        onChange: (event) => navEdit({ follow: event.target.checked === true }),
+      }),
+      node('span', { key: 'text' }, t('settings.nav.follow')),
+    ]),
+    node(
+      'div',
+      { key: 'states', className: 'uic-navStates' },
+      PANEL_NAV_STATES.map((option) =>
+        node(
+          'button',
+          {
+            key: option,
+            className: 'uic-filter' + (navChoice === option ? ' uic-filter-on' : ''),
+            type: 'button',
+            'data-uic-nav-pick': option,
+            'data-on': navNow === option ? 'true' : 'false',
+            disabled: followOn,
+            title: followOn ? t('settings.nav.followOn') : undefined,
+            onClick: () => navEdit({ follow: false, state: option }),
+          },
+          t('settings.nav.state.' + option),
+        ),
+      ),
+    ),
+    node(
+      'p',
+      { key: 'now', className: 'uic-dim', 'data-uic-nav-now': navNow },
+      t('settings.nav.now', { width: navWidthOf(navNow) }),
+    ),
+  ]);
+
   return node('div', { className: 'uic-page', 'data-uic-page': '1' }, [
     node('h2', { key: 'title', className: 'uic-title' }, t('settings.title')),
     node('p', { key: 'lead', className: 'uic-lead' }, t('settings.lead')),
@@ -1610,6 +1858,7 @@ function settingsPage(props) {
     )),
     node('p', { key: 'order-hint', className: 'uic-dim' }, t('settings.orderHint')),
     node('p', { key: 'order-hint-2', className: 'uic-dim' }, t('settings.orderHint2')),
+    navBlock,
     node('button', { key: 'reset', className: 'uic-btn uic-btn-quiet', type: 'button', 'data-uic-reset': '1', onClick: onReset }, armed ? t('settings.resetOnce') : t('settings.reset')),
   ]);
 }
@@ -1671,6 +1920,7 @@ function apply(ctx) {
   injectStyle(doc);
   ctx.effect(() => () => {
     stopPicking();
+    clearNavState(doc);
     removeStyle(doc);
     if (doc !== null) {
       for (const element of Array.from(doc.querySelectorAll('[' + HIDDEN_ATTR + ']'))) element.removeAttribute(HIDDEN_ATTR);
@@ -1681,8 +1931,10 @@ function apply(ctx) {
   const ordered = [];
 
   const applyAll = () => {
+    const current = readSettings();
     applyHidden();
-    applyVisualOrder(doc, readSettings(), ordered);
+    applyVisualOrder(doc, current, ordered);
+    applyNavStateTo(doc, current);
   };
 
   applyAll();
@@ -1795,6 +2047,18 @@ window.__ModuleLoader__.load({
       isOpen,
       toggleOpen,
       resetOpen,
+      NAV_ATTR,
+      PANEL_SELECTOR,
+      PANEL_NAV_STATES,
+      NAV_WIDTHS,
+      NAV_CSS,
+      navWidthOf,
+      navColumnsOf,
+      hostSidebarCollapsed,
+      resolveNavState,
+      sanitizeNav,
+      applyNavStateTo,
+      clearNavState,
       DICTS,
     };
   },

@@ -2,6 +2,18 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.1.1 — 2026-11-14
+
+### Added
+
+- **Three-state settings rail.** The left column of the settings dialog is now
+  `full` (188px), an `icon rail` (56px — labels hidden, each button keeps its
+  name as a tooltip) or `collapsed` (0px). It defaults to **following the host
+  sidebar**, using the same two readings the shipped code uses (an explicit
+  `data-sidebar-collapsed` marker, or a sidebar measured 1–64px wide); turn
+  following off to pick a state yourself. New settings field `nav`, stored with
+  the rest, with no settings-version bump.
+
 ## 0.1.0 — 2026-11-14
 
 First release with the inventory page.

@@ -65,6 +65,19 @@ is missing, this is the plugin that answers that.
 5. **Presets.** Hide-marks and visual order can be captured as named presets, applied,
    and deleted; storage follows the same rules as `better-notice` (unknown keys are
    preserved, user changes are marked, upgrades do not overwrite).
+6. **Settings rail width.** The left column of the settings dialog has three states:
+   **full** (188px, the default), an **icon rail** (56px — labels hidden, each button
+   keeps its name as a `title` tooltip) and **collapsed** (0px). By default it
+   **follows the host sidebar**: when the host's own session list is a rail, this one
+   is too, and the stored three-way choice is not read at all. Turn *Follow the host
+   sidebar* off to pick one of the three yourself. Only the first grid track and a
+   few `title` attributes are touched — no slot is registered, and `settings.header`
+   is never involved, so the shipped title is never shadowed.
+
+   The follow switch reads the same two signals the shipped behaviour does: an
+   explicit `data-sidebar-collapsed` marker in the document, or a sidebar element
+   measured between 1px and 64px wide. A different threshold would make the two
+   disagree the moment the host changes its width.
 
 ## What it deliberately does **not** do
 
@@ -123,7 +136,7 @@ on it.
 ```js
 const api = window.__UI_CONTROLLER__;
 
-api.version                                  // '0.1.0'
+api.version                                  // '0.1.1'
 api.catalog()                                // → [{ key, kind, scope, risk, purpose, registrantStatic, injectStatic }]
 api.catalogSummary()                         // → { total: 109, kinds: {...} }
 api.inventory()                              // → { rows, empty, totalSlots, occupiedSlots, hiddenCount,
@@ -164,7 +177,7 @@ Two sentences that belong in any answer about ordering:
 node --check client.js
 node --check index.js
 node --check test/classify.test.mjs
-node test/classify.test.mjs        # expect: PASS — 26 groups
+node test/classify.test.mjs        # expect: PASS — 35 groups
 node ..\..\cangku\tmp\261114_gate_ui_controller.mjs   # static gate, separate script
 ```
 
@@ -178,7 +191,12 @@ with the old `order` alias, and the zh/en dictionary parity. The grouped page ha
 its own groups: entries group under their slot with empty seats in their own zone,
 the three filters count what they keep, folding starts closed and survives a
 re-render, and the static fallback still draws slot heads when no live snapshot is
-available.
+available. The settings rail has four groups of its own: each state owns its grid
+track (56px / 0px, and `full` claims none so a wider host rail is inherited
+instead of pinned), following the host sidebar ignores the stored three-way
+choice (and reads the same 64px threshold the host does), the attribute plus
+tooltips are painted on the panel and taken back off, and picking a state stops
+following while the follow switch writes it straight back.
 
 ## Known limits
 
@@ -191,16 +209,29 @@ available.
    the reason instead of a control that does nothing.
 3. **Hiding is not unloading.** A hidden entry still runs. If it is expensive, this
    plugin is not the tool — talk to the plugin's author.
-3. **Visual order is CSS only.** It applies inside one flex/grid parent; a child of
+4. **Visual order is CSS only.** It applies inside one flex/grid parent; a child of
    a `display: contents` or block parent is skipped, and nothing outside our bound
    elements is touched.
-4. **Hash class names change every build.** Nothing here keys off them; only
+5. **Hash class names change every build.** Nothing here keys off them; only
    `data-*`, `role`, `aria-label`, `name` and `id` are used to build selectors.
-5. **`root` is off limits.** Listing it is fine; registering into it is not.
-6. **`registrant` is an inference.** The live value (`entry.registrant`) is only
+6. **`root` is off limits.** Listing it is fine; registering into it is not.
+7. **`registrant` is an inference.** The live value (`entry.registrant`) is only
    readable at runtime for entries present in the registry; the column shows the
    static proxy scanned out of the shipped bundles, so an entry registered by code
    that ships no literal key can read as "—".
+8. **The rail only collapses above 768px.** Below that breakpoint the host turns the
+   settings nav into a horizontal tab strip, where hiding the labels would leave an
+   unlabelled bar; the three states are inert there. Collapsing changes width and
+   paint order only — the keyboard order and the DOM order stay exactly as shipped.
+9. **Following is read at paint time, not subscribed to.** The rail re-reads the host
+   sidebar on the same two-second pass that applies visibility and order, so a manual
+   host collapse is reflected within that window rather than instantly.
+10. **Collapsed hides the section list.** With `Collapsed` the settings nav is 0px
+    wide, so while it is collapsed you cannot switch to another settings section.
+    Turn it back on from this page, or run
+    `__UI_CONTROLLER__.settings.set({ nav: { follow: false, state: 'rail' } })` in
+    the console. `Follow the host sidebar` (the default) never lands you there on
+    its own — only an explicit choice does.
 
 ## License
 
