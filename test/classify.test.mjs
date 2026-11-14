@@ -156,6 +156,11 @@ function test(name, fn) {
 }
 
 function resetStorage(seed = {}) {
+  if (globalThis.localStorage instanceof MemoryStorage) {
+    globalThis.localStorage.clear();
+    for (const [k, v] of Object.entries(seed)) globalThis.localStorage.setItem(k, v);
+    return globalThis.localStorage;
+  }
   globalThis.localStorage = new MemoryStorage(seed);
 }
 
@@ -596,7 +601,7 @@ test('restoring defaults drops every mark, binding and preset', () => {
     visualOrder: {},
     presets: {},
     activePreset: null,
-    nav: { follow: true, state: 'expanded' },
+    sidebarMore: { foldAll: true },
   });
   assert.equal(api.SETTINGS_KEY, 'dsh.uiController.settings.v1');
 });
@@ -894,172 +899,272 @@ test('the static fallback still renders slot rows', () => {
 }
 //#endregion
 
-/* ------------------------------------------------- settings rail (task-65) */
+/* ------------------------------------------------- sidebar More (task-80) */
 
-/**
- * Settings-modal stub: one panel, a nav with two labelled buttons, and the
- * host sidebar reading the rail threshold is keyed on.
- */
-function railDoc(options = {}) {
-  const collapsed = options.collapsed === true;
-  const sidebarWidth = options.sidebarWidth === undefined ? 280 : options.sidebarWidth;
-  const buttons = [];
-  const nav = element('nav');
-  for (const label of options.labels ?? ['Slots', 'Presets']) {
-    const button = element('button');
-    const icon = element('span');
-    const text = element('span');
-    text.textContent = label;
-    button.appendChild(icon);
-    button.appendChild(text);
-    button.querySelectorAll = (selector) => (selector === 'span' ? button.children : []);
-    buttons.push(button);
-    nav.appendChild(button);
-  }
-  const panel = element('div');
-  panel.appendChild(nav);
-  panel.querySelector = (selector) => (selector === 'nav' ? nav : null);
-  nav.querySelectorAll = (selector) => (selector === 'button' ? buttons : []);
-  const sidebar = { getBoundingClientRect: () => ({ width: sidebarWidth }) };
-  return {
-    doc: {
-      querySelector: (selector) => {
-        if (selector === api.PANEL_SELECTOR) return panel;
-        if (selector === '[data-sidebar-collapsed]') return collapsed === true ? element('div') : null;
-        if (selector === '[data-slot="sidebar"]') return sidebar;
-        return null;
-      },
-      querySelectorAll: (selector) => (selector === api.PANEL_SELECTOR ? [panel] : []),
-    },
-    panel,
-    nav,
-    buttons,
-  };
+/* The wide rail has no [data-shortcut-modal="sidebar"]: the launcher sits
+     under nav.panelList and carries its own aria-label (task-83 dump). */
+function hostLauncher(label) {
+  const row = element('button');
+  row.setAttribute('class', 'panelRow');
+  row.setAttribute('aria-label', label);
+  const title = element('span');
+  title.setAttribute('class', 'panelTitle');
+  title.textContent = label;
+  row.appendChild(title);
+  row.querySelector = (selector) => (selector === 'span[class*="panelTitle"]' ? title : null);
+  return { row, title };
 }
 
-test('the three rail states own their grid track', () => {
-  assert.equal(api.navColumnsOf('expanded'), '188px minmax(0, 1fr)');
-  assert.equal(api.navColumnsOf('rail'), '56px minmax(0, 1fr)', 'rail is a 56px first track');
-  assert.equal(api.navColumnsOf('hidden'), '0px minmax(0, 1fr)', 'hidden is a zero first track');
-  assert.equal(api.NAV_CSS.includes('grid-template-columns:56px minmax(0, 1fr) !important'), true);
-  assert.equal(api.NAV_CSS.includes('grid-template-columns:0px minmax(0, 1fr) !important'), true);
-  assert.equal(
-    api.NAV_CSS.includes('grid-template-columns:188px'),
-    false,
-    'the full state claims no track, so a wider host rail is inherited instead of pinned',
-  );
-  assert.equal(api.navWidthOf('nonsense'), 188, 'an unknown state falls back to full');
-});
+function hostPanel(label) {
+  return hostLauncher(label).row;
+}
 
-test('following the host sidebar ignores the stored three-way choice', () => {
-  const following = { ...api.defaultSettings(), nav: { follow: true, state: 'hidden' } };
-  assert.equal(
-    api.resolveNavState(following, railDoc({ collapsed: true }).doc),
-    'rail',
-    'a collapsed host turns the rail on, even though hidden is stored',
-  );
-  assert.equal(
-    api.resolveNavState(following, railDoc({ collapsed: false }).doc),
-    'expanded',
-    'an open host expands it, even though hidden is stored',
-  );
-  const loose = { ...api.defaultSettings(), nav: { follow: false, state: 'hidden' } };
-  assert.equal(api.resolveNavState(loose, railDoc({ collapsed: true }).doc), 'hidden', 'with following off the stored state wins');
-  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 56 }).doc), true, 'a 56px host sidebar is a rail');
-  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 64 }).doc), true, 'the threshold includes 64');
-  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 65 }).doc), false, '65px is not a rail');
-  assert.equal(api.hostSidebarCollapsed(railDoc({ sidebarWidth: 0 }).doc), false, 'zero width is absent, not collapsed');
-});
+function sidebarDoc(options = {}) {
+  const nav = element('nav');
+  nav.setAttribute('class', 'panelList');
+  const anchor = element('span');
+  anchor.setAttribute('class', 'moreAnchor');
+  const { row: button, title } = hostLauncher(options.label ?? '更多');
+  anchor.appendChild(button);
+  nav.appendChild(anchor);
+  const doc = {
+    querySelectorAll: (selector) => (selector === 'button[aria-label="更多"], button[aria-label="More"]' ? [button] : []),
+  };
+  return { doc, nav, button, title };
+}
 
-test('the rail is painted on the panel and taken back off', () => {
-  const harness = railDoc();
-  const rail = api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'rail' } });
-  assert.equal(rail, 'rail');
-  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'rail');
-  assert.equal(harness.buttons[0].getAttribute('title'), 'Slots', 'the label becomes a tooltip');
-  assert.equal(harness.buttons[1].getAttribute('title'), 'Presets');
-  api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'expanded' } });
-  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'expanded');
-  assert.equal(harness.buttons[0].getAttribute('title'), null, 'expanding releases the tooltips');
-  api.applyNavStateTo(harness.doc, { ...api.defaultSettings(), nav: { follow: false, state: 'hidden' } });
-  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), 'hidden');
-  api.clearNavState(harness.doc);
-  assert.equal(harness.panel.getAttribute(api.NAV_ATTR), null, 'unloading leaves no attribute behind');
-  assert.equal(api.applyNavStateTo(null, api.defaultSettings()), 'expanded', 'no document, no crash');
-});
-
-test('the nav field is sanitised and does not disturb the rest of the settings', () => {
+test('sidebar more: the folded record round-trips and stale ids are dropped', () => {
   resetStorage();
-  const base = api.defaultSettings();
-  assert.deepEqual(base.nav, { follow: true, state: 'expanded' });
-  assert.equal(base.version, 1, 'a new field does not bump the settings version');
-  assert.deepEqual(api.sanitizeNav({ follow: 'yes', state: 'sideways' }), { follow: true, state: 'expanded' });
-  assert.deepEqual(api.sanitizeNav({ follow: false, state: 'rail' }), { follow: false, state: 'rail' });
-  assert.deepEqual(api.sanitizeNav(null), { follow: true, state: 'expanded' });
-  const clean = api.sanitizeSettings({ nav: { follow: false, state: 'hidden' }, hidden: { 'conversation.view': { a: true } } });
-  assert.deepEqual(clean.nav, { follow: false, state: 'hidden' });
-  assert.deepEqual(clean.hidden, { 'conversation.view': { a: true } }, 'the existing fields survive a new one');
-  assert.deepEqual(clean.visualOrder, {}, 'and nothing else is invented');
+  const store = globalThis.localStorage;
+  api.writeSidebarMore(store, ['a', 'b', 'gone']);
+  assert.deepEqual(api.readSidebarMore(store), { folded: ['a', 'b', 'gone'] });
+  assert.deepEqual(api.cleanFolded(['a', 'b', 'gone'], ['a', 'b']), ['a', 'b'], 'unknown ids are cleaned');
+  assert.deepEqual(api.readSidebarMore(null), { folded: [] }, 'no storage, no crash');
+  store.setItem(api.SIDEBAR_MORE_KEY, '{nope');
+  assert.deepEqual(api.readSidebarMore(store), { folded: [] }, 'bad json falls back to an empty record');
+  assert.equal(api.SIDEBAR_MORE_KEY, 'dsh.uic.sidebarMore.v1');
 });
 
-test('the page carries a rail group that is inert while following', () => {
+test('sidebar more: foldAll decides the fold set, and off keeps the record', () => {
   resetStorage();
-  const ctx = fakeCtx({});
-  api.apply(ctx.scope, {});
-  const slot = ctx.registered[0].component({ t: api.translator('en') });
-  const page = typeof slot.type === 'function' ? slot.type({ ...slot.props, t: api.translator('en') }) : slot;
-  const gather = (item, into) => {
-    if (item === null || item === undefined || typeof item !== 'object') return into;
-    into.push(item);
-    for (const child of Array.isArray(item.props?.children) ? item.props.children.flat(3) : []) gather(child, into);
+  const settingsOn = { ...api.defaultSettings(), sidebarMore: { foldAll: true } };
+  const settingsOff = { ...api.defaultSettings(), sidebarMore: { foldAll: false } };
+  assert.deepEqual(api.computeFold(['plugins', 'a', 'b'], settingsOn), ['a', 'b'], 'foldAll folds everything except plugins');
+  assert.deepEqual(api.computeFold(['plugins', 'a', 'b'], settingsOff), [], 'off folds nothing');
+  assert.deepEqual(api.computeFold(['plugins', 'a', 'b'], api.defaultSettings()), ['a', 'b'], 'foldAll is the default');
+  api.writeSidebarMore(globalThis.localStorage, ['a']);
+  assert.deepEqual(api.readSidebarMore(globalThis.localStorage), { folded: ['a'] });
+  assert.deepEqual(api.computeFold(['plugins', 'a', 'b'], settingsOff), [], 'off still folds nothing');
+  assert.deepEqual(api.readSidebarMore(globalThis.localStorage), { folded: ['a'] }, 'the record survives an off flip');
+});
+
+test('sidebar more: the launcher count keeps the bare label at zero', () => {
+  resetStorage();
+  const settings = api.defaultSettings();
+  assert.equal(api.moreLabel('更多', 3), '更多 (3)');
+  assert.equal(api.moreLabel('更多', 0), '更多', 'zero keeps the bare label');
+  assert.equal(api.moreLabel('More', 1), 'More (1)');
+  assert.equal(api.sidebarMoreCount(['plugins', 'a', 'b'], settings, globalThis.localStorage), 2, 'foldAll counts everything but plugins');
+  const off = { ...settings, sidebarMore: { foldAll: false } };
+  assert.equal(api.sidebarMoreCount(['plugins', 'a', 'b'], off, globalThis.localStorage), 0, 'off counts nothing');
+  api.writeSidebarMore(globalThis.localStorage, ['b']);
+  assert.equal(api.sidebarMoreCount(['plugins', 'a', 'b'], off, globalThis.localStorage), 1, 'off counts the record');
+});
+
+test('sidebar more: the menu rows fold, unfold and jump through the host callbacks', () => {
+  resetStorage();
+  globalThis.window.__UI_CONTROLLER__.settings.set({ sidebarMore: { foldAll: false } });
+  const events = [];
+  const props = {
+    entries: [
+      { id: 'a', label: 'Panels A', pinned: true, active: false },
+      { id: 'b', label: 'Panels B', pinned: true, active: false },
+    ],
+    onOpen: (id) => events.push(['open', id]),
+    onPinnedChange: (id, pinned) => events.push(['pin', id, pinned]),
+    onDismiss: () => events.push(['dismiss']),
+  };
+  const menu = api.SidebarMoreMenu(props);
+  assert.equal(menu.props['data-uic-sidebar-more-menu'], '1');
+  const rows = menu.children.filter((child) => child.props?.['data-uic-more-row'] !== undefined);
+  assert.equal(rows.length, 2, 'one row per panel');
+  const rowA = rows[0];
+  assert.equal(rowA.props['data-uic-more-row'], 'a');
+  rowA.props.onClick();
+  assert.deepEqual(events.slice(-2), [['open', 'a'], ['dismiss']], 'a row click jumps and dismisses');
+  const pinB = rows.find((row) => row.props.children.find((child) => child.props?.['data-uic-more-pin'] === 'b'));
+  const pinButton = pinB.props.children.find((child) => child.props?.['data-uic-more-pin'] === 'b');
+  pinButton.props.onClick({ stopPropagation: () => {} });
+  const lastPin = events.filter((item) => item[0] === 'pin').pop();
+  assert.deepEqual(lastPin, ['pin', 'b', false], 'pinned=true folds into More');
+  assert.deepEqual(api.readSidebarMore(globalThis.localStorage).folded, ['b'], 'the fold lands in the record');
+  const walk = (node, into) => {
+    if (node === null || node === undefined) return into;
+    if (typeof node === 'object' && Array.isArray(node.children)) {
+      into.push(node);
+      for (const child of node.children) walk(child, into);
+    }
     return into;
   };
-  const nodes = gather(page, []);
-  assert.equal(nodes.filter((item) => item.props?.['data-uic-nav-section'] === '1').length, 1, 'exactly one rail group');
-  const follow = nodes.filter((item) => item.props?.['data-uic-nav-follow'] !== undefined);
-  assert.equal(follow.length, 1);
-  assert.equal(follow[0].props['data-uic-nav-follow'], 'true', 'following is the default');
-  const picks = nodes.filter((item) => item.props?.['data-uic-nav-pick'] !== undefined);
-  assert.deepEqual(picks.map((item) => item.props['data-uic-nav-pick']), ['expanded', 'rail', 'hidden']);
-  assert.equal(picks.every((item) => item.props.disabled === true), true, 'the three sit inert while following');
-  const now = nodes.filter((item) => item.props?.['data-uic-nav-now'] !== undefined);
-  assert.equal(now.length, 1);
-  assert.equal(now[0].props['data-uic-nav-now'], 'expanded');
-  for (const dispose of ctx.disposes) dispose();
+  const flat = walk(menu, []);
+  assert.equal(flat.some((child) => child.props?.['data-uic-more-foldall'] !== undefined), false, 'no fold-all bulk button');
+  assert.equal(flat.some((child) => child.props?.['data-uic-more-unfoldall'] !== undefined), false, 'no unfold-all bulk button');
+  const toggles = flat.filter((child) => child.props?.['data-uic-more-pin'] !== undefined);
+  assert.equal(toggles.length, 2, 'exactly one per-row toggle per panel');
+  const zh = api.translator('zh');
+  const rowB = rows.find((row) => row.props['data-uic-more-row'] === 'b');
+  const toggleB = rowB.props.children.find((child) => child.props?.['data-uic-more-pin'] === 'b');
+  assert.equal(toggleB.props.children[0], zh('settings.sidebarMore.fold'), 'an empty record reads as foldable');
+  /* The next test reads the cached settings again; hand the default back. */
+  globalThis.window.__UI_CONTROLLER__.settings.set({ sidebarMore: { foldAll: true } });
 });
 
-test('picking a rail state stops following, and the toggle writes it back', () => {
+test('sidebar more: replay folds only what the record and foldAll ask for', () => {
+  resetStorage();
+  const on = api.defaultSettings();
+  const off = { ...on, sidebarMore: { foldAll: false } };
+  const entries = [
+    { id: 'a', pinned: true },
+    { id: 'b', pinned: true },
+    { id: 'plugins', pinned: true },
+  ];
+  assert.deepEqual(api.sidebarMoreReplay(entries, on, globalThis.localStorage), ['a', 'b'], 'foldAll replays every panel but plugins');
+  assert.deepEqual(api.sidebarMoreReplay(entries, off, globalThis.localStorage), [], 'off replays nothing');
+  api.writeSidebarMore(globalThis.localStorage, ['b']);
+  assert.deepEqual(api.sidebarMoreReplay(entries, off, globalThis.localStorage), ['b'], 'off replays the record');
+  const alreadyFolded = [{ id: 'a', pinned: false }];
+  assert.deepEqual(api.sidebarMoreReplay(alreadyFolded, on, globalThis.localStorage), [], 'already folded is left alone');
+});
+
+test('sidebar more: the count label paints on the launcher and only when it changes', () => {
+  resetStorage();
+  const harness = sidebarDoc({ label: '更多' });
+  const settings = api.defaultSettings();
+  const panels = [{ id: 'plugins' }, { id: 'a' }, { id: 'b' }];
+  const info = { title: null, original: null };
+  api.paintMoreCount(harness.doc, panels, settings, globalThis.localStorage, info);
+  assert.equal(harness.title.textContent, '更多 (2)', 'foldAll writes the count');
+  api.paintMoreCount(harness.doc, panels, settings, globalThis.localStorage, info);
+  assert.equal(harness.title.textContent, '更多 (2)', 'a second pass leaves it alone');
+  assert.equal(harness.button.getAttribute('aria-label'), '更多', 'aria-label is untouched');
+  const none = sidebarDoc({ label: 'Something else' });
+  api.paintMoreCount(none.doc, panels, settings, globalThis.localStorage, info);
+  assert.equal(none.title.textContent, 'Something else', 'a foreign button is skipped silently');
+  const loose = hostLauncher('More');
+  api.paintMoreCount(
+    { querySelectorAll: (selector) => (selector === 'button[aria-label="更多"], button[aria-label="More"]' ? [loose.row] : []) },
+    panels,
+    settings,
+    globalThis.localStorage,
+    info,
+  );
+  assert.equal(loose.title.textContent, 'More', 'a launcher outside the panelList is skipped');
+  const empty = { querySelectorAll: () => [] };
+  api.paintMoreCount(empty, panels, settings, globalThis.localStorage, info);
+  assert.ok(true, 'no launcher, no crash');
+});
+
+test('sidebar more: folded panels are hidden on the list and restored on the way out', () => {
+  resetStorage();
+  const a = hostPanel('Panels A');
+  const b = hostPanel('Panels B');
+  const nav = element('nav');
+  nav.setAttribute('class', 'panelList');
+  nav.appendChild(a);
+  nav.appendChild(b);
+  const doc = {
+    querySelectorAll: (selector) => (selector === 'nav[class*="panelList"] button[class*="panelRow"]' ? [a, b] : []),
+  };
+  const panels = [
+    { id: 'a', label: 'Panels A' },
+    { id: 'b', label: 'Panels B' },
+  ];
+  const touched = new Map();
+  const on = api.defaultSettings();
+  api.applyFoldState(doc, panels, on, globalThis.localStorage, touched);
+  assert.equal(a.style.display, 'none', 'foldAll hides every panel but plugins');
+  assert.equal(b.style.display, 'none');
+  assert.equal(touched.size, 2);
+  const off = { ...on, sidebarMore: { foldAll: false } };
+  api.applyFoldState(doc, panels, off, globalThis.localStorage, touched);
+  assert.equal(a.style.display, '', 'turning foldAll off restores the row');
+  assert.equal(b.style.display, '');
+  assert.equal(touched.size, 0, 'restored rows leave the touched map');
+  const stranger = hostPanel('Somebody Else');
+  const doc2 = { querySelectorAll: (selector) => (selector.includes('panelList') ? [a, stranger] : []) };
+  api.applyFoldState(doc2, panels, on, globalThis.localStorage, touched);
+  assert.equal(a.style.display, 'none', 'the known row folds again');
+  assert.equal(stranger.style.display, undefined, 'a row with no matching panel id is left alone');
+  assert.equal(touched.size, 1, 'only the known row is tracked');
+});
+
+test('sidebar more: the host item look is sampled, never hardcoded', () => {
+  const host = element('button');
+  host.setAttribute('class', '_item_1p5el_105 menuItem');
+  host.textContent = '浏览更多插件';
+  const ours = element('button');
+  ours.setAttribute('class', 'uic-moreRow');
+  const menu = element('div');
+  menu.setAttribute('class', 'moreMenu');
+  menu.appendChild(host);
+  menu.appendChild(ours);
+  menu.querySelectorAll = (selector) => (selector === 'button' ? [host, ours] : []);
+  const styles = {
+    height: '32px',
+    'line-height': '20px',
+    'padding-left': '12px',
+    'padding-right': '12px',
+    'font-size': '14px',
+    'border-radius': '6px',
+    color: 'rgb(10, 10, 10)',
+  };
+  const doc = {
+    querySelector: (selector) => (selector === '[class*="moreMenu"]' ? menu : null),
+    querySelectorAll: () => [],
+    defaultView: { getComputedStyle: () => ({ getPropertyValue: (name) => styles[name] ?? '' }) },
+  };
+  const sample = api.sampleMoreItem(doc);
+  assert.equal(sample.className, '_item_1p5el_105 menuItem', 'the live class list is copied');
+  assert.equal(sample.style.height, '32px');
+  assert.equal(sample.style.fontSize, '14px');
+  assert.equal(api.sampleMoreItem(null), null, 'no document');
+  assert.equal(api.sampleMoreItem({ querySelector: () => null, defaultView: { getComputedStyle: () => ({}) } }), null, 'no menu');
+  assert.equal(api.sampleMoreItem({ querySelector: () => menu }), null, 'no computed style view');
+  const onlyOurs = element('button');
+  onlyOurs.setAttribute('class', 'uic-moreRow');
+  const emptyMenu = element('div');
+  emptyMenu.setAttribute('class', 'moreMenu');
+  emptyMenu.appendChild(onlyOurs);
+  emptyMenu.querySelectorAll = (selector) => (selector === 'button' ? [onlyOurs] : []);
+  assert.equal(
+    api.sampleMoreItem({ querySelector: () => emptyMenu, defaultView: { getComputedStyle: () => ({}) } }),
+    null,
+    'a menu with only our own rows has no sample',
+  );
+});
+
+test('sidebar more: the settings page carries the foldAll switch', () => {
   resetStorage();
   const ctx = fakeCtx({});
   api.apply(ctx.scope, {});
-  const render = () => {
-    const slot = ctx.registered[0].component({ t: api.translator('en') });
-    const page = typeof slot.type === 'function' ? slot.type({ ...slot.props, t: api.translator('en') }) : slot;
-    const gather = (item, into) => {
-      if (item === null || item === undefined || typeof item !== 'object') return into;
-      into.push(item);
-      for (const child of Array.isArray(item.props?.children) ? item.props.children.flat(3) : []) gather(child, into);
-      return into;
-    };
-    return gather(page, []);
+  const registered = ctx.registered.find((item) => item.spec.id === 'ui-controller');
+  const slot = registered.component({ t: api.translator('en') });
+  const page = typeof slot.type === 'function' ? slot.type({ ...slot.props, t: api.translator('en') }) : slot;
+  const flatten = (node, into) => {
+    if (node === null || node === undefined || typeof node !== 'object') return into;
+    into.push(node);
+    for (const child of Array.isArray(node.props?.children) ? node.props.children.flat(3) : []) flatten(child, into);
+    return into;
   };
-
-  const railButton = render().find((item) => item.props?.['data-uic-nav-pick'] === 'rail');
-  railButton.props.onClick();
-  assert.deepEqual(globalThis.window.__UI_CONTROLLER__.settings.get().nav, { follow: false, state: 'rail' }, 'a click both stops following and records the state');
-
-  const nodes = render();
-  const follow = nodes.find((item) => item.props?.['data-uic-nav-follow'] !== undefined);
-  assert.equal(follow.props.checked, false, 'the switch now shows following off');
-  assert.equal(follow.props['data-uic-nav-follow'], 'false');
-  const picks = nodes.filter((item) => item.props?.['data-uic-nav-pick'] !== undefined);
-  assert.equal(picks.every((item) => item.props.disabled === undefined || item.props.disabled === false), true, 'the three are live now');
-  assert.equal(picks.find((item) => item.props['data-uic-nav-pick'] === 'rail').props['data-on'], 'true', 'rail is the shown choice');
-
-  follow.props.onChange({ target: { checked: true } });
-  assert.deepEqual(globalThis.window.__UI_CONTROLLER__.settings.get().nav, { follow: true, state: 'rail' }, 'turning following back on keeps the stored choice');
+  const nodes = flatten(page, []);
+  const block = nodes.filter((item) => item.props?.['data-uic-sidebar-more'] === '1');
+  assert.equal(block.length, 1, 'exactly one sidebarMore block');
+  const box = nodes.filter((item) => item.props?.['data-uic-sidebar-more-foldall'] !== undefined);
+  assert.equal(box.length, 1, 'exactly one foldAll checkbox');
+  assert.equal(box[0].props['data-uic-sidebar-more-foldall'], 'true', 'foldAll defaults on');
   for (const dispose of ctx.disposes) dispose();
 });
+
 
 console.log('');
 if (failed > 0) {

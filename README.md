@@ -65,19 +65,28 @@ is missing, this is the plugin that answers that.
 5. **Presets.** Hide-marks and visual order can be captured as named presets, applied,
    and deleted; storage follows the same rules as `better-notice` (unknown keys are
    preserved, user changes are marked, upgrades do not overwrite).
-6. **Settings rail width.** The left column of the settings dialog has three states:
-   **full** (188px, the default), an **icon rail** (56px — labels hidden, each button
-   keeps its name as a `title` tooltip) and **collapsed** (0px). By default it
-   **follows the host sidebar**: when the host's own session list is a rail, this one
-   is too, and the stored three-way choice is not read at all. Turn *Follow the host
-   sidebar* off to pick one of the three yourself. Only the first grid track and a
-   few `title` attributes are touched — no slot is registered, and `settings.header`
-   is never involved, so the shipped title is never shadowed.
-
-   The follow switch reads the same two signals the shipped behaviour does: an
-   explicit `data-sidebar-collapsed` marker in the document, or a sidebar element
-   measured between 1px and 64px wide. A different threshold would make the two
-   disagree the moment the host changes its width.
+6. **Left column: folded panels behind the More button.** The session list on the
+   home page keeps only `plugins` and the "More" launcher in the left column; every
+   other panel is folded behind it. The host's own pin state is in-memory only, so
+   this plugin persists the folded ids itself (`dsh.uic.sidebarMore.v1` →
+   `{ folded: string[] }`) and replays them every time the menu opens or the panel
+   list changes. Folded ids are cleaned against the live panel set on every read,
+   and `sidebarMore.foldAll` (default **on**) decides the shape for fresh installs;
+   with it off, only the ids already in the record are folded. The "More" button
+   label gains a count (`更多 (3)`) painted in place, only when the number changes.
+   The menu itself is one entry in `sidebar.panellist.actions`: it renders one
+   row per panel with a single per-row toggle (folds / restores through the
+   host's `onPinnedChange` and mirrors the record). There are no bulk buttons in
+   the menu — `sidebarMore.foldAll` on the settings page is the only bulk switch.
+   Rows copy the look of a real host menu item at runtime (class list plus
+   `getComputedStyle` height / padding / font / radius / colour); nothing is
+   hardcoded, and if no host item is on screen our own class is used until one
+   appears. Folding itself is a `display:none` pass over
+   `nav[class*="panelList"] button[class*="panelRow"]`, matched by
+   `aria-label` / title, re-applied by a MutationObserver, and undone on
+   teardown; a row we cannot identify is left alone. Nothing else is touched: no
+   custom panel rows, no icon replacement, and the settings dialog's own nav
+   width is left alone.
 
 ## What it deliberately does **not** do
 
@@ -136,7 +145,7 @@ on it.
 ```js
 const api = window.__UI_CONTROLLER__;
 
-api.version                                  // '0.1.1'
+api.version                                  // '0.2.1'
 api.catalog()                                // → [{ key, kind, scope, risk, purpose, registrantStatic, injectStatic }]
 api.catalogSummary()                         // → { total: 109, kinds: {...} }
 api.inventory()                              // → { rows, empty, totalSlots, occupiedSlots, hiddenCount,
@@ -177,7 +186,7 @@ Two sentences that belong in any answer about ordering:
 node --check client.js
 node --check index.js
 node --check test/classify.test.mjs
-node test/classify.test.mjs        # expect: PASS — 35 groups
+node test/classify.test.mjs        # expect: PASS — 38 groups
 node ..\..\cangku\tmp\261114_gate_ui_controller.mjs   # static gate, separate script
 ```
 
@@ -191,12 +200,12 @@ with the old `order` alias, and the zh/en dictionary parity. The grouped page ha
 its own groups: entries group under their slot with empty seats in their own zone,
 the three filters count what they keep, folding starts closed and survives a
 re-render, and the static fallback still draws slot heads when no live snapshot is
-available. The settings rail has four groups of its own: each state owns its grid
-track (56px / 0px, and `full` claims none so a wider host rail is inherited
-instead of pinned), following the host sidebar ignores the stored three-way
-choice (and reads the same 64px threshold the host does), the attribute plus
-tooltips are painted on the panel and taken back off, and picking a state stops
-following while the follow switch writes it straight back.
+available. The sidebar-more behaviour has groups of its own: replay folds only
+what the record and `foldAll` ask for; the count label repaints through the
+`nav.panelList` ancestor and only when its text changes; folding hides the live
+rows and restores them on the way out, leaving rows it cannot identify alone; and
+the menu borrows a live host item's class list and computed size instead of any
+hardcoded name.
 
 ## Known limits
 
@@ -219,19 +228,15 @@ following while the follow switch writes it straight back.
    readable at runtime for entries present in the registry; the column shows the
    static proxy scanned out of the shipped bundles, so an entry registered by code
    that ships no literal key can read as "—".
-8. **The rail only collapses above 768px.** Below that breakpoint the host turns the
-   settings nav into a horizontal tab strip, where hiding the labels would leave an
-   unlabelled bar; the three states are inert there. Collapsing changes width and
-   paint order only — the keyboard order and the DOM order stay exactly as shipped.
-9. **Following is read at paint time, not subscribed to.** The rail re-reads the host
-   sidebar on the same two-second pass that applies visibility and order, so a manual
-   host collapse is reflected within that window rather than instantly.
-10. **Collapsed hides the section list.** With `Collapsed` the settings nav is 0px
-    wide, so while it is collapsed you cannot switch to another settings section.
-    Turn it back on from this page, or run
-    `__UI_CONTROLLER__.settings.set({ nav: { follow: false, state: 'rail' } })` in
-    the console. `Follow the host sidebar` (the default) never lands you there on
-    its own — only an explicit choice does.
+8. **The More menu coexists with other action entries.** The host renders every
+   registration of `sidebar.panellist.actions` into the same menu; when another
+   plugin (for example the codex-ui skin on the desktop profile) also contributes
+   there, the two menus share the popup. This plugin does not remove or reorder
+   other entries.
+9. **Replay is best-effort against the host's in-memory pins.** The host keeps its
+   own `unpinned` list only for the session; a folded id is re-hidden when the host
+   honours the pin callback, and a host restart resets the host list while this
+   plugin's record is replayed on the next menu open or panel-list change.
 
 ## License
 

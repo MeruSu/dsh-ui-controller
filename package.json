@@ -1,7 +1,7 @@
 {
   "name": "dsh-ui-controller",
-  "version": "0.1.1",
-  "description": "Placeholder release: inspect and control the UI that other plugins register into DeepSeek Harness slots (visibility, order, mirrored entries). The real implementation ships in a later version.",
+  "version": "0.2.1",
+  "description": "Inspect and control the UI other plugins register into DeepSeek Harness slots (visibility, order, mirrored entries), and fold the sidebar's panels behind a single \"More (N)\" row.",
   "license": "MIT",
   "author": {
     "name": "MeruSu"

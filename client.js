@@ -27,7 +27,7 @@
  * slots sort by `priority → order`, everything else by `priority` alone.
  */
 
-const VERSION = '0.1.1';
+const VERSION = '0.2.1';
 
 const NS = 'uiController';
 const SECTION_ID = 'ui-controller';
@@ -76,9 +76,13 @@ const PAGE_CSS = [
   '.uic-filterGroup{display:inline-flex;gap:2px}',
   '.uic-filter{height:26px;padding:0 8px;border-radius:6px;font-size:11px;cursor:pointer;border:1px solid var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-secondary)}',
   '.uic-filter[data-on="true"]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
-  '.uic-navSection{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
-  '.uic-navFollow{display:inline-flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}',
-  '.uic-navStates{display:flex;gap:6px;flex-wrap:wrap}',
+  '.uic-sidebarMore{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.uic-sidebarMoreRow{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}',
+  '.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;font-size:13px;line-height:20px}',
+  '.uic-moreRow + .uic-moreRow{border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.uic-moreRowName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.uic-moreAction{flex:none;padding:2px 8px;font-size:12px;border:1px solid var(--dsw-alias-border-l4);border-radius:6px;cursor:pointer}',
+  '.uic-moreAction:hover{background:var(--dsw-alias-bg-layer-2)}',
   '.uic-zone{border-top:.5px solid var(--dsw-alias-border-l2);padding:2px 0}',
   '.uic-zoneHead{display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 2px;border:0;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;font-size:12px;font-weight:600}',
   '.uic-zoneName{flex:none}',
@@ -105,96 +109,64 @@ const PAGE_CSS = [
 
 /* ------------------------------------------------- settings page left rail */
 
-const NAV_ATTR = 'data-uic-nav';
-const PANEL_SELECTOR = 'div[data-shortcut-modal="settings"]';
-const PANEL_NAV_STATES = ['expanded', 'rail', 'hidden'];
-const NAV_WIDTHS = { expanded: 188, rail: 56, hidden: 0 };
-const HOST_SIDEBAR_RAIL_MAX = 64;
 
-/** Width of the settings rail, in px, for one of the three states. */
-function navWidthOf(state) {
-  return hasOwn(NAV_WIDTHS, state) ? NAV_WIDTHS[state] : NAV_WIDTHS.expanded;
-}
+const SIDEBAR_MORE_KEY = 'dsh.uic.sidebarMore.v1';
+const SIDEBAR_MORE_SLOT = 'sidebar.panellist.actions';
+const SIDEBAR_MORE_ID = 'ui-controller.sidebar-more';
+const SIDEBAR_MORE_ORDER = 0;
+const SIDEBAR_MORE_MODAL = '[data-shortcut-modal="sidebar"]';
+const MORE_TITLES = new Set(['更多', 'More']);
 
 /**
- * First grid track of the settings modal.
- *
- * Longhand on purpose: the host's shorthand also carries grid area names that
- * are hashed per build, so copying the whole declaration would break on the
- * next release. Only the first track belongs to us.
+ * The folded record: which panel ids the More menu currently hides.
+ * The host keeps its pins in memory only (dsh-client-ui-sidebar
+ * createPanelPins), so a reload would put every panel back outside;
+ * this record is what a reload replays.
  */
-function navColumnsOf(state) {
-  return navWidthOf(state) + 'px minmax(0, 1fr)';
-}
-
-/*
- * Collapsing only means something while the host draws the rail as a vertical
- * column; below 768px it becomes a horizontal tab strip, where hiding the
- * labels would leave an unlabelled bar. Same breakpoint the host uses.
- *
- * Only the two collapsed states claim a track. Leaving `expanded` untouched
- * means the host keeps ownership of its own width: if a later build widens the
- * rail, we inherit it instead of pinning an old number.
- */
-const NAV_CSS = [
-  '@media (min-width:768px){',
-  ...PANEL_NAV_STATES.filter((state) => state !== 'expanded').map(
-    (state) =>
-      PANEL_SELECTOR + '[' + NAV_ATTR + '="' + state + '"]{grid-template-columns:' + navColumnsOf(state) + ' !important}',
-  ),
-  PANEL_SELECTOR + '[' + NAV_ATTR + '="rail"] > nav{padding:10px 6px 0;overflow:hidden}',
-  PANEL_SELECTOR + '[' + NAV_ATTR + '="rail"] > nav button{justify-content:center;padding:8px 0;gap:0}',
-  PANEL_SELECTOR +
-    '[' +
-    NAV_ATTR +
-    '="rail"] > nav button > span:nth-child(2){position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}',
-  PANEL_SELECTOR + '[' + NAV_ATTR + '="hidden"]{overflow:hidden}',
-  PANEL_SELECTOR + '[' + NAV_ATTR + '="hidden"] > nav{display:none}',
-  '}',
-].join('\n');
-
-/** Only the three stored states are meaningful; anything else is "expanded". */
-function stateOr(value) {
-  return PANEL_NAV_STATES.includes(value) ? value : 'expanded';
-}
-
-/**
- * Whether the host's own session sidebar is currently a rail.
- *
- * Two readings, both taken from the shipped behaviour rather than invented
- * here: an explicit `data-sidebar-collapsed` marker anywhere in the document,
- * or a sidebar element measured between 1px and 64px. The three sidebar
- * selectors are the ones the shipped code probes, in the same order; a
- * different threshold would make the two disagree the moment the host changes
- * its width.
- */
-function hostSidebarCollapsed(doc) {
-  if (doc === null || doc === undefined || typeof doc.querySelector !== 'function') return false;
+function readSidebarMore(storage) {
+  const store = storage ?? null;
+  if (store === null || typeof store.getItem !== 'function') return { folded: [] };
   try {
-    if (doc.querySelector('[data-sidebar-collapsed]') !== null) return true;
-    const sidebar =
-      doc.querySelector('[data-slot="sidebar"]') ??
-      doc.querySelector('div[class*="sidebarCol"]') ??
-      doc.querySelector('div[class*="hHd-Xa_root"]');
-    if (sidebar === null || sidebar === undefined || typeof sidebar.getBoundingClientRect !== 'function') return false;
-    const measured = sidebar.getBoundingClientRect().width;
-    return Number.isFinite(measured) && measured > 0 && measured <= HOST_SIDEBAR_RAIL_MAX;
+    const raw = store.getItem(SIDEBAR_MORE_KEY);
+    if (raw === null || raw === undefined || raw === '') return { folded: [] };
+    const parsed = JSON.parse(raw);
+    if (isPlainObject(parsed) === false || Array.isArray(parsed.folded) === false) return { folded: [] };
+    return { folded: parsed.folded.filter((id) => typeof id === 'string' && id !== '') };
   } catch {
-    return false;
+    return { folded: [] };
   }
 }
 
+function writeSidebarMore(storage, folded) {
+  const store = storage ?? null;
+  if (store === null || typeof store.setItem !== 'function') return;
+  try {
+    store.setItem(SIDEBAR_MORE_KEY, JSON.stringify({ folded }));
+  } catch {
+    /* a full quota must not take the page down */
+  }
+}
+
+/** Folded ids that still name a live panel; the rest are stale and dropped. */
+function cleanFolded(folded, panels) {
+  const live = new Set(panels);
+  return folded.filter((id) => live.has(id));
+}
+
 /**
- * Which of the three states applies right now.
- *
- * `follow` on (the default) means the rail mirrors the host sidebar, and the
- * stored three-way choice is deliberately not read at all — that is the whole
- * point of following.
+ * What a fresh install looks like: with foldAll on, every panel except
+ * plugins goes behind the More button (the shape the user asked for).
+ * Off means nothing folds — but the stored record is never erased here, so
+ * turning the switch back on restores it (see the menu's replay).
  */
-function resolveNavState(settings, doc) {
-  const nav = isPlainObject(settings) && isPlainObject(settings.nav) ? settings.nav : {};
-  if (nav.follow !== false) return stateOr(hostSidebarCollapsed(doc) ? 'rail' : 'expanded');
-  return stateOr(nav.state);
+function computeFold(panels, settings) {
+  if (settings?.sidebarMore?.foldAll === true) return panels.filter((id) => id !== 'plugins');
+  return [];
+}
+
+/** The More launcher's text: "更多 (3)", and the bare label at zero. */
+function moreLabel(base, count) {
+  return count > 0 ? base + ' (' + count + ')' : base;
 }
 
 const PRESET_NAME_MAX = 40;
@@ -353,7 +325,7 @@ function defaultSettings() {
     visualOrder: {},
     presets: {},
     activePreset: null,
-    nav: { follow: true, state: 'expanded' },
+    sidebarMore: { foldAll: true },
   };
 }
 
@@ -442,14 +414,6 @@ function sanitizePresets(raw) {
 }
 
 /** `follow` defaults to on; the three-way choice only matters when it is off. */
-function sanitizeNav(raw) {
-  const next = { follow: true, state: 'expanded' };
-  if (isPlainObject(raw) === false) return next;
-  if (raw.follow === false) next.follow = false;
-  if (PANEL_NAV_STATES.includes(raw.state)) next.state = raw.state;
-  return next;
-}
-
 function sanitizeSettings(raw) {
   const base = defaultSettings();
   if (isPlainObject(raw) === false) return base;
@@ -459,7 +423,7 @@ function sanitizeSettings(raw) {
   next.visualOrder = sanitizeVisualOrder(raw.visualOrder ?? raw.order);
   next.presets = sanitizePresets(raw.presets);
   next.activePreset = typeof raw.activePreset === 'string' && hasOwn(next.presets, raw.activePreset) ? raw.activePreset : null;
-  next.nav = sanitizeNav(raw.nav);
+  next.sidebarMore = isPlainObject(raw.sidebarMore) ? { foldAll: raw.sidebarMore.foldAll !== false } : { foldAll: true };
   return next;
 }
 
@@ -547,7 +511,7 @@ function patchSettings(patch) {
     visualOrder,
     presets: isPlainObject(patch.presets) ? patch.presets : base.presets,
     activePreset: hasOwn(patch, 'activePreset') ? patch.activePreset : base.activePreset,
-    nav: { ...(isPlainObject(base.nav) ? base.nav : {}), ...(isPlainObject(patch.nav) ? patch.nav : {}) },
+    sidebarMore: { ...(isPlainObject(base.sidebarMore) ? base.sidebarMore : {}), ...(isPlainObject(patch.sidebarMore) ? patch.sidebarMore : {}) },
   });
 }
 
@@ -1083,14 +1047,13 @@ const ZH = {
   'settings.filter.unbound': '未绑定',
   'settings.filterCount': '{slots} 槽 · {entries} entry',
   'settings.noMatch': '没有匹配的座位。',
-  'settings.nav.title': '设置页左栏',
-  'settings.nav.hint': '只改设置页左侧分类栏的宽度：展开、56px 图标栏，或收起。键盘顺序与 DOM 顺序都不变。',
-  'settings.nav.follow': '跟随宿主侧栏',
-  'settings.nav.followOn': '跟随宿主侧栏时这三档不生效，先关掉跟随。',
-  'settings.nav.state.expanded': '展开',
-  'settings.nav.state.rail': '图标栏',
-  'settings.nav.state.hidden': '收起',
-  'settings.nav.now': '当前选择：{width}px。',
+  'settings.sidebarMore.title': '左栏「更多」',
+  'settings.sidebarMore.hint': '新装即把除「插件」外的面板都收进左侧「更多 (N)」；关掉 = 全部放回外面（记录保留，下次开回来还原）。',
+  'settings.sidebarMore.foldAll': '新装即全部折叠',
+  'settings.sidebarMore.fold': '收进更多',
+  'settings.sidebarMore.unfold': '放到外面',
+  'settings.sidebarMore.foldAllAction': '全部收进更多',
+  'settings.sidebarMore.unfoldAllAction': '全部放回外面',
 };
 
 const EN = {
@@ -1145,14 +1108,13 @@ const EN = {
   'settings.filter.unbound': 'Unbound',
   'settings.filterCount': '{slots} slots · {entries} entries',
   'settings.noMatch': 'No slot matches.',
-  'settings.nav.title': 'Settings rail',
-  'settings.nav.hint': 'Only the width of the settings rail changes: full, a 56px icon rail, or collapsed. Keyboard and DOM order never change.',
-  'settings.nav.follow': 'Follow the host sidebar',
-  'settings.nav.followOn': 'While following, these three do not apply — turn following off first.',
-  'settings.nav.state.expanded': 'Full',
-  'settings.nav.state.rail': 'Icon rail',
-  'settings.nav.state.hidden': 'Collapsed',
-  'settings.nav.now': 'Selected: {width}px.',
+  'settings.sidebarMore.title': 'Sidebar More',
+  'settings.sidebarMore.hint': 'A fresh install folds every panel except Plugins behind the More (N) button; off puts everything back outside (the record is kept, so turning it on restores it).',
+  'settings.sidebarMore.foldAll': 'Fold everything on a fresh install',
+  'settings.sidebarMore.fold': 'Fold into More',
+  'settings.sidebarMore.unfold': 'Show outside',
+  'settings.sidebarMore.foldAllAction': 'Fold all into More',
+  'settings.sidebarMore.unfoldAllAction': 'Put all back outside',
 };
 
 const DICTS = { zh: ZH, en: EN };
@@ -1186,7 +1148,7 @@ function node(tagName, props, children) {
 
 function injectStyle(doc) {
   if (doc === null || doc === undefined) return;
-  const css = HIDE_CSS + '\n' + PAGE_CSS + '\n' + NAV_CSS;
+  const css = HIDE_CSS + '\n' + PAGE_CSS;
   const existing = typeof doc.getElementById === 'function' ? doc.getElementById(STYLE_ID) : null;
   /* A reloaded plugin can find the stylesheet its previous instance left behind.
      Rewriting it keeps the three rule groups from drifting apart. */
@@ -1206,75 +1168,6 @@ function removeStyle(doc) {
   if (doc === null || doc === undefined) return;
   const existing = typeof doc.getElementById === 'function' ? doc.getElementById(STYLE_ID) : null;
   if (existing !== null && existing !== undefined && typeof existing.remove === 'function') existing.remove();
-}
-
-/* ------------------------------------------------------------- nav DOM */
-
-/** Buttons we put a `title` on, so leaving rail state can undo exactly those. */
-const navTitled = [];
-
-/**
- * Put captured `title` attributes back, then forget them.
- *
- * `keep` is the set of buttons that should stay titled: the two-second paint
- * pass calls this with the buttons it just found, so a host re-render that
- * replaces the nav nodes drops the stale entries and nothing is written twice.
- */
-function releaseNavTitles(keep) {
-  for (let index = navTitled.length - 1; index >= 0; index -= 1) {
-    const item = navTitled[index];
-    if (keep !== undefined && keep.has(item.element) === true) continue;
-    if (item.previous === null) item.element.removeAttribute('title');
-    else item.element.setAttribute('title', item.previous);
-    navTitled.splice(index, 1);
-  }
-}
-
-/**
- * Paint one of the three states onto the settings modal.
- *
- * Only the panel attribute and a handful of `title` attributes are written:
- * the nav markup belongs to the host and is never moved, re-registered or
- * re-rendered by us. Rail state hides the labels with CSS, so nothing has to
- * be remembered across a host re-render beyond the attribute itself. Called
- * every two seconds, so every write is guarded — an unchanged attribute or
- * tooltip is left alone instead of being re-set in a loop.
- */
-function applyNavStateTo(doc, settings) {
-  const state = resolveNavState(settings, doc);
-  if (doc === null || doc === undefined || typeof doc.querySelector !== 'function') return state;
-  const panel = doc.querySelector(PANEL_SELECTOR);
-  if (panel === null || panel === undefined) {
-    releaseNavTitles();
-    return state;
-  }
-  if (panel.getAttribute(NAV_ATTR) !== state) panel.setAttribute(NAV_ATTR, state);
-  const nav = state === 'rail' && typeof panel.querySelector === 'function' ? panel.querySelector('nav') : null;
-  if (nav === null || nav === undefined || typeof nav.querySelectorAll !== 'function') {
-    releaseNavTitles();
-    return state;
-  }
-  const wanted = new Set();
-  for (const button of Array.from(nav.querySelectorAll('button'))) {
-    const spans = typeof button.querySelectorAll === 'function' ? Array.from(button.querySelectorAll('span')) : [];
-    const label = elementText(spans.length > 1 ? spans[1] : button);
-    if (label === '') continue;
-    wanted.add(button);
-    if (button.getAttribute('title') === label) continue;
-    if (navTitled.some((item) => item.element === button) === false) {
-      navTitled.push({ element: button, previous: button.getAttribute('title') });
-    }
-    button.setAttribute('title', label);
-  }
-  releaseNavTitles(wanted);
-  return state;
-}
-
-/** Take the attribute and every `title` back off, e.g. when the plugin unloads. */
-function clearNavState(doc) {
-  releaseNavTitles();
-  if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return;
-  for (const panel of Array.from(doc.querySelectorAll(PANEL_SELECTOR))) panel.removeAttribute(NAV_ATTR);
 }
 
 /* ---------------------------------------------------------------- grouping */
@@ -1727,52 +1620,20 @@ function settingsPage(props) {
 
   const presetNames = Object.keys(state.presets).sort();
 
-  const navStored = isPlainObject(state.nav) ? state.nav : {};
-  const followOn = navStored.follow !== false;
-  const navChoice = PANEL_NAV_STATES.includes(navStored.state) ? navStored.state : 'expanded';
-  /* While following, the three buttons are inert, so the selected mark and the
-     width line show what the rail is actually doing right now. */
-  const navNow = followOn ? resolveNavState({ nav: navStored }, typeof document === 'undefined' ? null : document) : navChoice;
-  const navEdit = (change) => commit({ ...state, nav: { ...navStored, ...change } });
-
-  const navBlock = node('div', { key: 'nav', className: 'uic-navSection', 'data-uic-nav-section': '1' }, [
-    node('h3', { key: 'h', className: 'uic-h3' }, t('settings.nav.title')),
-    node('p', { key: 'hint', className: 'uic-dim' }, t('settings.nav.hint')),
-    node('label', { key: 'follow', className: 'uic-navFollow' }, [
+  const foldAllOn = state.sidebarMore?.foldAll !== false;
+  const sidebarMoreBlock = node('div', { key: 'sidebarMore', className: 'uic-sidebarMore', 'data-uic-sidebar-more': '1' }, [
+    node('h3', { key: 'h', className: 'uic-h3' }, t('settings.sidebarMore.title')),
+    node('p', { key: 'hint', className: 'uic-dim' }, t('settings.sidebarMore.hint')),
+    node('label', { key: 'fold', className: 'uic-sidebarMoreRow' }, [
       node('input', {
         key: 'box',
         type: 'checkbox',
-        'data-uic-nav-follow': followOn ? 'true' : 'false',
-        checked: followOn,
-        onChange: (event) => navEdit({ follow: event.target.checked === true }),
+        'data-uic-sidebar-more-foldall': foldAllOn ? 'true' : 'false',
+        checked: foldAllOn,
+        onChange: (event) => commit({ ...state, sidebarMore: { ...(isPlainObject(state.sidebarMore) ? state.sidebarMore : {}), foldAll: event.target.checked === true } }),
       }),
-      node('span', { key: 'text' }, t('settings.nav.follow')),
+      node('span', { key: 'text' }, t('settings.sidebarMore.foldAll')),
     ]),
-    node(
-      'div',
-      { key: 'states', className: 'uic-navStates' },
-      PANEL_NAV_STATES.map((option) =>
-        node(
-          'button',
-          {
-            key: option,
-            className: 'uic-filter' + (navChoice === option ? ' uic-filter-on' : ''),
-            type: 'button',
-            'data-uic-nav-pick': option,
-            'data-on': navNow === option ? 'true' : 'false',
-            disabled: followOn,
-            title: followOn ? t('settings.nav.followOn') : undefined,
-            onClick: () => navEdit({ follow: false, state: option }),
-          },
-          t('settings.nav.state.' + option),
-        ),
-      ),
-    ),
-    node(
-      'p',
-      { key: 'now', className: 'uic-dim', 'data-uic-nav-now': navNow },
-      t('settings.nav.now', { width: navWidthOf(navNow) }),
-    ),
   ]);
 
   return node('div', { className: 'uic-page', 'data-uic-page': '1' }, [
@@ -1858,9 +1719,322 @@ function settingsPage(props) {
     )),
     node('p', { key: 'order-hint', className: 'uic-dim' }, t('settings.orderHint')),
     node('p', { key: 'order-hint-2', className: 'uic-dim' }, t('settings.orderHint2')),
-    navBlock,
+    sidebarMoreBlock,
     node('button', { key: 'reset', className: 'uic-btn uic-btn-quiet', type: 'button', 'data-uic-reset': '1', onClick: onReset }, armed ? t('settings.resetOnce') : t('settings.reset')),
   ]);
+}
+
+
+/* -------------------------------------------------- sidebar More menu */
+
+/** Module state shared by the menu and the replay paths. */
+let sidebarWrite = null;
+let sidebarPanels = [];
+let sidebarReplayQueued = false;
+
+/** Elements this session hid and the launcher title it rewrote; both are restored on teardown. */
+const moreTouched = new Map();
+const moreTitle = { title: null, original: null };
+
+/** Resolve a panel entry's label the way the host does (thunk first, then string, then id). */
+function entryLabelOf(entry) {
+  const raw = entry?.options?.label ?? entry?.label;
+  if (typeof raw === 'function') {
+    try {
+      const value = raw();
+      if (typeof value === 'string' && value !== '') return value;
+    } catch {
+      /* a locale-bound thunk may throw before the host binds it; fall through */
+    }
+  }
+  if (typeof raw === 'string' && raw !== '') return raw;
+  return String(entry?.options?.id ?? entry?.id ?? '');
+}
+
+/** ids that should be behind the More button right now (foldAll wins, plugins never folds). */
+function foldedIdsOf(panels, settings, storageRef) {
+  const ids = panels.map((panel) => panel.id);
+  return desiredFoldIds(
+    panels.map((panel) => ({ id: panel.id })),
+    settings,
+    storageRef,
+  ).filter((id) => id !== 'plugins');
+}
+
+/**
+ * Hide the panel rows that belong behind the More button. The host keeps its
+ * pins in memory only and re-renders rows on every store change, so this pass
+ * is idempotent, re-applied by the observer after every host redraw, and
+ * undone on teardown. Rows are matched by the same aria-label / title the host
+ * renders; a row we cannot identify is left alone (silent skip).
+ */
+function applyFoldState(doc, panels, settings, storageRef, touched) {
+  if (doc === null || typeof doc.querySelectorAll !== 'function') return;
+  const folded = new Set(foldedIdsOf(panels, settings, storageRef));
+  const byLabel = new Map();
+  for (const panel of panels) byLabel.set(panel.label, panel.id);
+  let rows = [];
+  try {
+    rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
+  } catch {
+    rows = [];
+  }
+  for (const row of rows) {
+    const label = row.getAttribute?.('aria-label') ?? '';
+    let titleText = '';
+    if (typeof row.querySelector === 'function') {
+      try {
+        const title = row.querySelector('span[class*="panelTitle"]');
+        if (title !== null && title !== undefined) titleText = title.textContent ?? '';
+      } catch {
+        titleText = '';
+      }
+    }
+    const id = byLabel.get(label) ?? byLabel.get(titleText) ?? null;
+    if (id === null) continue;
+    const hide = folded.has(id);
+    const current = row.style?.display ?? '';
+    if (hide === true && current !== 'none') {
+      if (touched.has(row) === false) touched.set(row, current);
+      row.style.display = 'none';
+    } else if (hide === false && touched.has(row) === true) {
+      row.style.display = touched.get(row);
+      touched.delete(row);
+    }
+  }
+}
+
+/**
+ * Sample a real host menu item so our rows can borrow its look: the class list
+ * is copied at runtime (never hardcoded) and the fixed dimensions are read from
+ * getComputedStyle. Returns null when the menu is not open yet or the host item
+ * is missing — callers fall back to their own class until it appears.
+ */
+function sampleMoreItem(doc) {
+  if (doc === null || typeof doc.querySelectorAll !== 'function') return null;
+  const view = doc.defaultView;
+  if (view === undefined || view === null || typeof view.getComputedStyle !== 'function') return null;
+  let menu = null;
+  try {
+    menu = doc.querySelector('[class*="moreMenu"]');
+  } catch {
+    menu = null;
+  }
+  if (menu === null || menu === undefined) return null;
+  let host = null;
+  try {
+    host =
+      Array.from(menu.querySelectorAll('button')).find((button) => {
+        const cls = button.getAttribute?.('class') ?? '';
+        return cls.includes('uic-') === false;
+      }) ?? null;
+  } catch {
+    host = null;
+  }
+  if (host === null) return null;
+  const cs = view.getComputedStyle(host);
+  if (cs === null || cs === undefined) return null;
+  const pick = (name) => {
+    if (typeof cs.getPropertyValue === 'function') return cs.getPropertyValue(name) ?? '';
+    return cs[name] ?? '';
+  };
+  return {
+    className: host.getAttribute?.('class') ?? '',
+    style: {
+      height: pick('height'),
+      lineHeight: pick('line-height'),
+      paddingLeft: pick('padding-left'),
+      paddingRight: pick('padding-right'),
+      fontSize: pick('font-size'),
+      borderRadius: pick('border-radius'),
+      color: pick('color'),
+    },
+  };
+}
+
+/** ids currently behind the More button: foldAll wins, else the record. */
+function desiredFoldIds(entries, settings, storage) {
+  const ids = entries.map((entry) => entry.id);
+  if (settings?.sidebarMore?.foldAll === true) return computeFold(ids, settings);
+  return cleanFolded(readSidebarMore(storage).folded, ids);
+}
+
+/**
+ * The actions a replay would need to take: fold every live entry that is
+ * currently pinned but should be behind More. The host's setPinned is
+ * idempotent (it no-ops on an unchanged pin), so replay is safe to repeat.
+ */
+function sidebarMoreReplay(entries, settings, storage) {
+  const wanted = new Set(desiredFoldIds(entries, settings, storage));
+  return entries.filter((entry) => entry.pinned === true && wanted.has(entry.id)).map((entry) => entry.id);
+}
+
+/** The count the launcher shows: folded ids that still name a live panel. */
+function sidebarMoreCount(panels, settings, storage) {
+  if (settings?.sidebarMore?.foldAll === true) return computeFold(panels, settings).length;
+  return cleanFolded(readSidebarMore(storage).folded, panels).length;
+}
+
+/** Write one panel's pin through the host callback and keep the record honest. */
+function writeSidebarPin(id, pinned, entries, settings, storage) {
+  if (sidebarWrite === null) return;
+  sidebarWrite(id, pinned);
+  const ids = entries.map((entry) => entry.id);
+  const record = cleanFolded(readSidebarMore(storage).folded, ids);
+  const next = pinned ? record.filter((entry) => entry !== id) : record.includes(id) ? record : [...record, id];
+  writeSidebarMore(storage, next);
+}
+
+/**
+ * The More menu rows. Rendered by the host inside its own Menu portal; we own
+ * nothing but these rows. position:fixed is forbidden here (the portal may
+ * be anywhere); the host handles placement.
+ */
+function SidebarMoreMenu(props) {
+  const entries = Array.isArray(props.entries) ? props.entries : [];
+  const onOpen = typeof props.onOpen === 'function' ? props.onOpen : () => {};
+  const onDismiss = typeof props.onDismiss === 'function' ? props.onDismiss : () => {};
+  const write = typeof props.onPinnedChange === 'function' ? props.onPinnedChange : null;
+  const t = translator(localeScope());
+  sidebarWrite = write;
+  sidebarPanels = entries.map((entry) => entry.id);
+  const settings = readSettings();
+  const storageRef = storage();
+  const record = readSidebarMore(storageRef).folded;
+  const ids = entries.map((entry) => entry.id);
+  const doc = typeof document === 'undefined' ? null : document;
+  const [sampled, setSampled] = React.useState(null);
+
+  /* First render: fold whatever the record / foldAll asks for. The host
+     re-renders the menu with the new pins, and its guard makes the second
+     pass a no-op, so deferring to a microtask keeps us out of the render
+     cycle. */
+  if (write !== null && sidebarReplayQueued === false) {
+    sidebarReplayQueued = true;
+    if (typeof setTimeout === 'function') {
+      setTimeout(() => {
+        for (const id of sidebarMoreReplay(entries, readSettings(), storageRef)) write(id, false);
+      }, 0);
+    } else {
+      for (const id of sidebarMoreReplay(entries, settings, storageRef)) write(id, false);
+    }
+  }
+
+  /* The host menu items live in the same list as our rows; borrowing their
+     class list and fixed dimensions makes every row look host-drawn. The
+     sample is taken a tick later so the official items exist by then. */
+  if (sampled === null && typeof setTimeout === 'function') {
+    setTimeout(() => setSampled(sampleMoreItem(doc)), 0);
+  }
+
+  /**
+   * Flip one panel. `folded` is the state the row is showing: true means the
+   * panel is behind More right now, which may be foldAll talking rather than
+   * the record — so freeing it also has to switch foldAll off, and folding it
+   * back is a plain record write. Both branches leave the record consistent
+   * with what the row will show on the next pass.
+   */
+  const flipPanel = (id, folded) => {
+    const ids = entries.map((item) => item.id);
+    if (folded === false) {
+      writeSidebarPin(id, false, entries, settings, storageRef);
+      return;
+    }
+    const onlyOutside = ids.filter((item) => item !== 'plugins' && item !== id);
+    /* Ask the host to put this row outside first — folding is derived from
+       foldAll and the record, so skipping the host call leaves the panel
+       hidden by the host's own pin state and it never comes back. */
+    writeSidebarPin(id, true, entries, settings, storageRef);
+    writeSettings({ ...readSettings(), sidebarMore: { foldAll: false } });
+    writeSidebarMore(storageRef, cleanFolded(onlyOutside, ids));
+  };
+
+  const wanted = new Set(desiredFoldIds(entries, settings, storageRef));
+  const rowClass = sampled !== null && sampled.className !== '' ? sampled.className : 'uic-moreRow';
+  const rowStyle = sampled !== null
+    ? { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', width: '100%', boxSizing: 'border-box' }
+    : null;
+
+  return node('div', { key: 'more', 'data-uic-sidebar-more-menu': '1' }, [
+    ...entries.map((entry) => {
+      const folded = wanted.has(entry.id);
+      return node('button', {
+        key: entry.id,
+        type: 'button',
+        className: rowClass,
+        style: rowStyle,
+        'data-uic-more-row': entry.id,
+        onClick: () => { onOpen(entry.id); onDismiss(); },
+      }, [
+        node('span', { key: 'name', className: 'uic-moreRowName' }, entry.label),
+        node('span', {
+          key: 'toggle',
+          className: 'uic-moreToggle',
+          'data-uic-more-pin': entry.id,
+          role: 'button',
+          tabIndex: 0,
+          onClick: (event) => {
+            event.stopPropagation();
+            flipPanel(entry.id, folded);
+          },
+          onKeyDown: (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              flipPanel(entry.id, folded);
+            }
+          },
+        }, folded === true ? t('settings.sidebarMore.unfold') : t('settings.sidebarMore.fold')),
+      ]);
+    }),
+  ]);
+}
+
+/**
+ * Paint the folded count onto the host's launcher row: find the More button by
+ * its own aria-label, then rewrite only the title span. The aria-label stays
+ * untouched (screen readers keep "更多"); a missing button is skipped
+ * silently.
+ */
+function paintMoreCount(doc, panels, settings, storageRef, titleInfo) {
+  if (doc === null || typeof doc.querySelectorAll !== 'function') return;
+  let candidates = [];
+  try {
+    candidates = Array.from(doc.querySelectorAll('button[aria-label="更多"], button[aria-label="More"]'));
+  } catch {
+    candidates = [];
+  }
+  const launcher = candidates.find((button) => {
+    if (button.getAttribute === undefined) return false;
+    if (MORE_TITLES.has(button.getAttribute('aria-label')) === false) return false;
+    let parent = button.parentElement ?? null;
+    while (parent !== null) {
+      const cls = parent.getAttribute?.('class') ?? '';
+      if (cls.includes('panelList')) return true;
+      parent = parent.parentElement;
+    }
+    return false;
+  });
+  if (launcher === undefined) return;
+  let title = null;
+  if (typeof launcher.querySelector === 'function') {
+    try {
+      title = launcher.querySelector('span[class*="panelTitle"]');
+    } catch {
+      title = null;
+    }
+  }
+  if (title === null || title === undefined) return;
+  if (titleInfo.title !== null && titleInfo.title !== title) return;
+  if (titleInfo.title === null) {
+    titleInfo.title = title;
+    titleInfo.original = title.textContent ?? '';
+  }
+  const count = sidebarMoreCount(panels.map((panel) => panel.id), settings, storageRef);
+  /** The aria-label is the stable base; the title may already carry a painted count. */
+  const base = launcher.getAttribute('aria-label') ?? '';
+  const wanted = moreLabel(base, count);
+  if (title.textContent !== wanted) title.textContent = wanted;
 }
 
 function apply(ctx) {
@@ -1873,6 +2047,61 @@ function apply(ctx) {
   const entriesOf = (key) => (slots === undefined ? [] : slots.entriesOfSlot(key));
 
   const inventory = () => slotRows(entriesOf, readSettings(), runtimeCatalog(slots));
+
+  const sidebarPanelsOf = () =>
+    entriesOf('sidebar.panellist')
+      .map((entry) => ({ id: String(entry?.options?.id ?? ''), label: entryLabelOf(entry) }))
+      .filter((panel) => panel.id !== '');
+  const paintCount = () => paintMoreCount(doc, sidebarPanelsOf(), readSettings(), storage(), moreTitle);
+  const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);
+
+  /* One slot only, and only after it is declared: the inject callback itself
+     only fires once the host declares the slot, so the guard is belt and
+     braces (dsh-plugin-dev §13). */
+  ctx.effect(
+    () =>
+      ctx.slots.inject(SIDEBAR_MORE_SLOT, () => {
+        if (typeof ctx.slots.spec === 'function' && ctx.slots.spec(SIDEBAR_MORE_SLOT) === undefined) return () => {};
+        return ctx.slots.register(
+          {
+            name: SIDEBAR_MORE_SLOT,
+            id: SIDEBAR_MORE_ID,
+            order: SIDEBAR_MORE_ORDER,
+            locale: NS,
+            label: () => t('settings.sidebarMore.title'),
+          },
+          (props) => h(SidebarMoreMenu, props),
+        );
+      }),
+    'ui-controller: sidebar more',
+  );
+
+  /* Host pins are memory-only; a reload loses them. The record replays through
+     the write entry captured by the menu (null until the menu has rendered
+     once), so subscribe on every panellist change and try. */
+  if (typeof slots?.subscribe === 'function') {
+    ctx.effect(() => slots.subscribe('sidebar.panellist', () => {
+      const write = sidebarWrite;
+      if (write === null) return;
+      const settings = readSettings();
+      const entries = sidebarPanels.map((panel) => ({ id: panel.id, pinned: true }));
+      for (const id of sidebarMoreReplay(entries, settings, storage())) write(id, false);
+    }), 'ui-controller: sidebar more replay');
+  }
+
+  /* Count label: an observer catches the launcher appearing/re-rendering, and
+     the 2s pass below is the fallback. */
+  let moreObserver = null;
+  if (doc !== null && typeof doc.body?.addEventListener === 'function' && typeof MutationObserver === 'function') {
+    try {
+      moreObserver = new MutationObserver(() => { paintCount(); applyFold(); });
+      moreObserver.observe(doc.body, { childList: true, subtree: true });
+    } catch {
+      moreObserver = null;
+    }
+  }
+  paintCount();
+  applyFold();
 
   let pickHandler = null;
 
@@ -1919,8 +2148,18 @@ function apply(ctx) {
 
   injectStyle(doc);
   ctx.effect(() => () => {
+    if (moreObserver !== null && typeof moreObserver.disconnect === 'function') moreObserver.disconnect();
+    for (const [row, original] of moreTouched) {
+      if (row.style !== undefined) row.style.display = original;
+    }
+    moreTouched.clear();
+    if (moreTitle.title !== null) moreTitle.title.textContent = moreTitle.original;
+    moreTitle.title = null;
+    moreTitle.original = null;
+    sidebarWrite = null;
+    sidebarPanels = [];
+    sidebarReplayQueued = false;
     stopPicking();
-    clearNavState(doc);
     removeStyle(doc);
     if (doc !== null) {
       for (const element of Array.from(doc.querySelectorAll('[' + HIDDEN_ATTR + ']'))) element.removeAttribute(HIDDEN_ATTR);
@@ -1934,7 +2173,8 @@ function apply(ctx) {
     const current = readSettings();
     applyHidden();
     applyVisualOrder(doc, current, ordered);
-    applyNavStateTo(doc, current);
+    paintCount();
+    applyFold();
   };
 
   applyAll();
@@ -2047,18 +2287,24 @@ window.__ModuleLoader__.load({
       isOpen,
       toggleOpen,
       resetOpen,
-      NAV_ATTR,
-      PANEL_SELECTOR,
-      PANEL_NAV_STATES,
-      NAV_WIDTHS,
-      NAV_CSS,
-      navWidthOf,
-      navColumnsOf,
-      hostSidebarCollapsed,
-      resolveNavState,
-      sanitizeNav,
-      applyNavStateTo,
-      clearNavState,
+      SIDEBAR_MORE_KEY,
+      SIDEBAR_MORE_SLOT,
+      SIDEBAR_MORE_ID,
+      SIDEBAR_MORE_MODAL,
+      readSidebarMore,
+      writeSidebarMore,
+      cleanFolded,
+      computeFold,
+      moreLabel,
+      sidebarMoreReplay,
+      sidebarMoreCount,
+      desiredFoldIds,
+      foldedIdsOf,
+      entryLabelOf,
+      applyFoldState,
+      sampleMoreItem,
+      paintMoreCount,
+      SidebarMoreMenu,
       DICTS,
     };
   },

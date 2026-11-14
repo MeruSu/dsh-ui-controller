@@ -2,6 +2,55 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.1 — 2026-11-15
+
+### Fixed
+
+- **The More button now carries its count, and folding survives a reload.**
+  The launcher is found by its own `aria-label` under
+  `nav[class*="panelList"]` — the wide rail has no
+  `[data-shortcut-modal="sidebar"]` wrapper, so the previous lookup never
+  matched and the count was never painted (and the aria-label is left untouched).
+- **Folded panels are actually hidden now.** Writing the host's pin only happens
+  while the menu is mounted, so a reload lost it; folding is now a
+  `display:none` pass over the live panel rows, matched by `aria-label` /
+  title, re-applied by a MutationObserver, and undone on teardown. A row we
+  cannot identify is left alone.
+- **The More menu rows look host-drawn.** The row class list and fixed sizes are
+  sampled from a real host menu item at runtime (never a hardcoded hashed class);
+  our own class is used until one is on screen.
+
+### Removed
+
+- **The two bulk buttons in the More menu.** Fold-all / unfold-all move to the
+  settings page only (`sidebarMore.foldAll`); the menu keeps one per-row toggle,
+  so the three conflicting controls the user saw cannot appear together.
+
+## 0.2.0 — 2026-11-15
+
+### Added
+
+- **Left column folded behind the More button.** A new entry in
+  `sidebar.panellist.actions` renders rows for every panel: click jumps and
+  dismisses, a pin button per row folds/restores through the host's
+  `onPinnedChange`, and fold-all / unfold-all actions cover the whole list. The
+  folded ids are persisted (`dsh.uic.sidebarMore.v1`, `{ folded: string[] }`)
+  because the host's own pin state is in-memory only, cleaned against the live
+  panel set on every read, and replayed on every menu open / panel-list change.
+  `sidebarMore.foldAll` (default on) decides the shape for fresh installs. The
+  host's "More" launcher label gains a painted count (`更多 (3)`), only when the
+  number changes.
+- `window.__UI_CONTROLLER__` additions: none — the menu is a slot entry, not an
+  API; the record lives under the normal settings storage.
+
+### Removed
+
+- **Three-state settings rail** (0.1.1's `nav` field, its CSS, its settings-page
+  block and its i18n keys). The user chose the left column of the chat page over
+  the settings dialog, so the whole width block is gone; `SETTINGS_VERSION`
+  stays at 1 and the unknown-key preservation rules keep an old `nav` record
+  harmless if it was ever written.
+
 ## 0.1.1 — 2026-11-14
 
 ### Added
