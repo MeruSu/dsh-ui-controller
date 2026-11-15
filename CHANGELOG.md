@@ -2,17 +2,27 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.4 — 2026-11-15
+### Changed
+- The launcher never shows a folded count anymore (user m20715); the counter
+  is removed, and a stale 「更多 (N)」left by an older build is restored to the
+  bare label.
+### Fixed
+- The More menu no longer flashes a bordered row for one frame before the host
+  look arrives: the sample is taken from the first row's ref (after the menu
+  is in the DOM, before the browser paints), and the fallback row is
+  host-shaped (no border, host padding and height).
+- A borrowed glyph keeps the ids its own drawing references, so `<use href="#symbol">`
+  icons stay intact instead of turning into empty boxes.
+
 ## 0.2.3 — 2026-11-15
 
 ### Fixed
 
-- **The number after More is the sidebar's own truth.** It used to come from
-  our fold record, while the rows actually off screen are decided by the host's
-  pin state — so a record naming two panels could sit next to five hidden rows
-  and paint `更多 (2)`. `foldedRowCount` now counts "panels we know about minus
-  rows still on screen", reading `display:none` on the row and on any wrapper
-  the fold pass hid. When the sidebar cannot be read (collapsed, not mounted) the
-  launcher keeps its bare label instead of guessing a zero.
+- A launcher count existed for one release; the number, its painter and its
+  label combinator were removed in 0.2.4 after the user asked for no number
+  at all (m20715: 「直接不显示那个 数字了」). A stale count painted by this
+  release is normalised back to the bare label.
 
 ## 0.2.2 — 2026-11-15
 

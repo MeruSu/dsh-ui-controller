@@ -992,18 +992,23 @@ test('sidebar more: foldAll decides the fold set, and off keeps the record', () 
   assert.deepEqual(api.readSidebarMore(globalThis.localStorage), { folded: ['a'] }, 'the record survives an off flip');
 });
 
-test('sidebar more: the launcher count keeps the bare label at zero', () => {
+test('sidebar more: the launcher never shows a number', () => {
   resetStorage();
-  const settings = api.defaultSettings();
-  assert.equal(api.moreLabel('更多', 3), '更多 (3)');
-  assert.equal(api.moreLabel('更多', 0), '更多', 'zero keeps the bare label');
-  assert.equal(api.moreLabel('More', 1), 'More (1)');
-  const off = { ...settings, sidebarMore: { foldAll: false } };
-  assert.deepEqual(api.computeFold(['plugins', 'a', 'b'], off), [], 'off folds nothing');
-  api.writeSidebarMore(globalThis.localStorage, ['b']);
-  assert.deepEqual(api.readSidebarMore(globalThis.localStorage), { folded: ['b'] }, 'the record keeps the one id');
+  const sourceText = source;
+  assert.equal(sourceText.includes('function foldedRowCount('), false, 'the DOM counter is gone');
+  assert.equal(sourceText.includes('function paintMoreCount('), false, 'the painter is gone');
+  assert.equal(sourceText.includes('moreLabel('), false, 'the label combinator is gone');
+  const harness = sidebarDoc({ label: '更多', panels: ['Panels A', 'Panels B'] });
+  for (const row of harness.rows) row.style.display = 'none';
+  api.normalizeMoreTitle(harness.doc);
+  assert.equal(harness.title.textContent, '更多', 'rows hidden or not, the label stays bare');
+  const harness2 = sidebarDoc({ label: 'More', panels: ['Panels A', 'Panels B'] });
+  api.normalizeMoreTitle(harness2.doc);
+  assert.equal(harness2.title.textContent, 'More', 'English label stays bare too');
+  const blind = { querySelectorAll: () => [] };
+  api.normalizeMoreTitle(blind);
+  assert.ok(true, 'no launcher, no crash');
 });
-
 test('sidebar more: the menu rows fold, unfold and jump through the host callbacks', () => {
   resetStorage();
   globalThis.window.__UI_CONTROLLER__.settings.set({ sidebarMore: { foldAll: false } });
@@ -1069,95 +1074,24 @@ test('sidebar more: replay folds only what the record and foldAll ask for', () =
   assert.deepEqual(api.sidebarMoreReplay(alreadyFolded, on, globalThis.localStorage), [], 'already folded is left alone');
 });
 
-test('sidebar more: the count label paints on the launcher and only when it changes', () => {
+test('sidebar more: a stale painted count is restored to the bare label', () => {
   resetStorage();
   const harness = sidebarDoc({ label: '更多', panels: ['Panels A', 'Panels B'] });
-  for (const row of harness.rows) row.style.display = 'none';
-  const settings = api.defaultSettings();
-  const panels = [{ id: 'plugins' }, { id: 'a' }, { id: 'b' }];
-  const info = { title: null, original: null };
-  api.paintMoreCount(harness.doc, panels, info);
-  assert.equal(harness.title.textContent, '更多 (2)', 'the hidden rows write the count');
-  api.paintMoreCount(harness.doc, panels, info);
-  assert.equal(harness.title.textContent, '更多 (2)', 'a second pass leaves it alone');
-  assert.equal(harness.button.getAttribute('aria-label'), '更多', 'aria-label is untouched');
-  const none = sidebarDoc({ label: 'Something else' });
-  api.paintMoreCount(none.doc, panels, info);
-  assert.equal(none.title.textContent, 'Something else', 'a foreign button is skipped silently');
-  const loose = hostLauncher('More');
-  api.paintMoreCount(
-    { querySelectorAll: (selector) => (selector === 'button[aria-label="更多"], button[aria-label="More"]' ? [loose.row] : []) },
-    panels,
-    info,
-  );
-  assert.equal(loose.title.textContent, 'More', 'a launcher outside the panelList is skipped');
-  const empty = { querySelectorAll: () => [] };
-  api.paintMoreCount(empty, panels, info);
-  assert.ok(true, 'no launcher, no crash');
+  harness.title.textContent = '更多 (2)';
+  api.normalizeMoreTitle(harness.doc);
+  assert.equal(harness.title.textContent, '更多', 'the old "(2)" painted by an older build is taken back off');
+  harness.title.textContent = '更多';
+  api.normalizeMoreTitle(harness.doc);
+  assert.equal(harness.title.textContent, '更多', 'already bare stays bare');
+  assert.equal(harness.button.getAttribute('aria-label'), '更多', 'the aria-label is never touched');
 });
-
-test('sidebar more: the launcher counts what the DOM hides, not the record', () => {
+test('sidebar more: only the host launcher is ever normalised', () => {
   resetStorage();
-  /* The record names two panels while five rows are actually off screen: the
-     launcher used to paint (2) here, which is the bug the user reported. */
-  api.writeSidebarMore(globalThis.localStorage, ['a', 'b']);
-  const harness = sidebarDoc({ label: '更多', panels: ['a', 'b', 'c', 'd', 'e'] });
-  for (const row of harness.rows) row.style.display = 'none';
-  const panels = ['plugins', 'a', 'b', 'c', 'd', 'e'].map((id) => ({ id }));
-  const settings = { ...api.defaultSettings(), sidebarMore: { foldAll: false } };
-  const info = { title: null, original: null };
-  api.paintMoreCount(harness.doc, panels, info);
-  assert.equal(harness.title.textContent, '更多 (5)', 'five hidden rows win over the two recorded ids');
-  assert.equal(api.foldedRowCount(harness.doc, panels), 5, 'the number is readable on its own');
-
-  /* Same moment: the menu lists one row per panel and all of them are inside. */
-  const entries = ['a', 'b', 'c', 'd', 'e'].map((id) => ({ id, label: id, pinned: false, active: false }));
-  const zh = api.translator('zh');
-  const menu = api.SidebarMoreMenu({ entries, onOpen() {}, onDismiss() {}, onPinnedChange() {} });
-  const rows = menu.children.filter((child) => child.props?.['data-uic-more-row'] !== undefined);
-  assert.equal(rows.length, 5, 'one menu row per panel');
-  const inside = rows.filter((row) => {
-    const toggle = row.props.children.find((child) => child.props?.['data-uic-more-pin'] !== undefined);
-    return toggle.props.children[0] === zh('settings.sidebarMore.unfold');
-  });
-  assert.equal(inside.length, 5, 'every menu row is inside right now');
-  assert.equal(inside.length, api.foldedRowCount(harness.doc, panels), 'the launcher number matches the menu');
-
-  /* The plugins row is a panel row but it never folds: it must not look like a
-     visible panel while the only real panel is hidden (field off-by-one). */
-  const withPlugins = sidebarDoc({ label: '更多', panels: ['插件', 'a'] });
-  withPlugins.rows[0].setAttribute('aria-label', '插件');
-  withPlugins.rows[1].style.display = 'none';
-  assert.equal(
-    api.foldedRowCount(withPlugins.doc, [{ id: 'plugins', label: '插件' }, { id: 'a', label: 'a' }]),
-    1,
-    'the plugins row never counts as a visible panel',
-  );
-
-  /* The host removes a pinned panel's row entirely: still "inside". */
-  const thinned = sidebarDoc({ label: '更多' });
-  assert.equal(api.foldedRowCount(thinned.doc, panels), 5, 'rows the host removed count as inside');
-
-  /* A row hidden behind a wrapper counts as hidden too (foldUnitOf case). */
-  const wrapped = sidebarDoc({ label: '更多', panels: ['a'] });
-  const shell = element('div');
-  wrapped.nav.appendChild(shell);
-  shell.appendChild(wrapped.rows[0]);
-  shell.style.display = 'none';
-  assert.equal(api.foldedRowCount(wrapped.doc, [{ id: 'plugins' }, { id: 'a' }]), 1, 'a wrapper hide counts too');
-
-  /* Put them back on screen: the number goes away, the label stays. */
-  for (const row of harness.rows) row.style.display = '';
-  api.paintMoreCount(harness.doc, panels, info);
-  assert.equal(harness.title.textContent, '更多', 'nothing hidden, bare label');
-
-  /* A sidebar that cannot be read is not a zero: no number, no crash. */
-  const blind = { querySelector: () => null, querySelectorAll: () => [] };
-  assert.equal(api.foldedRowCount(blind, panels), null, 'unreadable sidebar reports null');
-  api.paintMoreCount(blind, panels, { title: null, original: null });
-  assert.ok(true, 'a missing sidebar leaves the label alone');
+  const other = sidebarDoc({ label: 'Something else', panels: ['Panels A'] });
+  other.title.textContent = 'Something else (7)';
+  api.normalizeMoreTitle(other.doc);
+  assert.equal(other.title.textContent, 'Something else (7)', 'an unrelated row keeps its own text');
 });
-
 test('sidebar more: folded panels are hidden on the list and restored on the way out', () => {
   resetStorage();
   const a = hostPanel('Panels A');
@@ -1427,6 +1361,77 @@ test('sidebar more: folding takes the icon with the text', () => {
   orphan.querySelector = () => null;
   nav.appendChild(orphan);
   assert.equal(api.foldUnitOf(orphan), orphan, 'a row directly under nav is its own unit');
+});
+
+test('sidebar more: the first frame already looks host-drawn, so nothing flashes', () => {
+  const css = source;
+  assert.ok(
+    css.includes('.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;padding:0 8px'),
+    'the fallback row keeps the host metrics and no extra padding',
+  );
+  assert.equal(css.includes('.uic-moreRow + .uic-moreRow'), false, 'the old border between fallback rows is gone');
+  assert.equal(css.includes('padding:4px 2px'), false, 'the old cramped padding is gone');
+  assert.equal(css.includes('setTimeout(() => setSampled('), false, 'the sample no longer waits for a timer tick');
+  assert.equal(css.split('setSampled(').length - 1, 1, 'the sample lands in exactly one place, so there is no mid-way state');
+  assert.ok(css.includes('ref: ensureSample'), 'every row takes the sample in its ref, before the browser paints');
+
+  const props = {
+    entries: [{ id: 'a', label: 'Panels A', pinned: true, active: false }],
+    onOpen: () => {},
+    onPinnedChange: () => {},
+    onDismiss: () => {},
+  };
+  const savedDoc = globalThis.document;
+  const blindDoc = { querySelector: () => null, querySelectorAll: () => [] };
+  let menuEl = null;
+  try {
+    globalThis.document = blindDoc;
+    menuEl = api.SidebarMoreMenu(props);
+  } finally {
+    globalThis.document = savedDoc;
+  }
+  const row = menuEl.children.find((child) => child.props?.['data-uic-more-row'] !== undefined);
+  assert.ok(row, 'the menu still renders a row');
+  assert.equal(typeof row.props.ref, 'function', 'the row samples the host in its ref, before the browser paints');
+  try {
+    globalThis.document = blindDoc;
+    assert.equal(row.props.ref(), false, 'with no host item yet it says so instead of inventing a style');
+  } finally {
+    globalThis.document = savedDoc;
+  }
+});
+
+test('sidebar more: a clone keeps the ids its own drawing references', () => {
+  const svg = element('svg');
+  svg.setAttribute('id', 'decorative-id');
+  const symbol = element('symbol');
+  symbol.setAttribute('id', 'sprite-clock');
+  const use = element('use');
+  use.setAttribute('href', '#sprite-clock');
+  svg.appendChild(symbol);
+  svg.appendChild(use);
+  const row = element('button');
+  row.setAttribute('class', 'panelRow');
+  row.setAttribute('aria-label', 'Panels A');
+  const glyph = element('span');
+  glyph.setAttribute('class', 'panelGlyph');
+  glyph.appendChild(svg);
+  row.querySelector = (selector) => (selector === 'span[class*="panelGlyph"]' ? glyph : null);
+
+  const clone = api.glyphCloneOf(row);
+  assert.ok(clone, 'the drawing is cloned');
+  const walk = (item, into) => {
+    into.push(item);
+    for (const child of item.children ?? []) walk(child, into);
+    return into;
+  };
+  const all = walk(clone, []);
+  const names = all.map((item) => item.getAttribute?.('id')).filter(Boolean);
+  assert.deepEqual(names, ['sprite-clock'], 'referenced ids stay, decorative ones go');
+  assert.ok(
+    all.some((item) => item.getAttribute?.('href') === '#sprite-clock'),
+    'the <use> still points at the symbol it kept',
+  );
 });
 
 

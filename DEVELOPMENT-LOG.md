@@ -51,3 +51,10 @@
 **已做**：落地的改动
 **不许再动**：已定稿、再优化就是倒退的部分
 ```
+
+## 0.2.4 — 2026-11-15 · the More menu flashed a bordered frame
+
+- **User (m20671)**: 「这个展开功能 点开会先闪一下这个界面 然后变成正常界面 看一下是不是在旧的内容上改什么代码实现了新的内容 然后旧的功能就没删」
+- **Fact**: the sample was taken in `setTimeout(…, 0)`, so the first paint used our own `.uic-moreRow` fallback, and that fallback still carried `padding: 4px 2px` plus `.uic-moreRow + .uic-moreRow { border-top: … }` — the bordered rows in the screenshot. The next tick swapped in the sampled host class.
+- **Done in 0.2.4**: the sample moved into the first row's `ref` (commit time, before paint), and the fallback class was reshaped to host metrics with the border rule deleted. One test group pins both facts.
+- **Do not**: never let a fallback style reach the screen — the first paint must already look host-drawn; keep the fallback host-shaped if it is ever visible; do not reintroduce a timer for the sample.

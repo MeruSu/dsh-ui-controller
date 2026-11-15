@@ -27,7 +27,7 @@
  * slots sort by `priority → order`, everything else by `priority` alone.
  */
 
-const VERSION = '0.2.3';
+const VERSION = '0.2.4';
 
 const NS = 'uiController';
 const SECTION_ID = 'ui-controller';
@@ -78,8 +78,7 @@ const PAGE_CSS = [
   '.uic-filter[data-on="true"]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
   '.uic-sidebarMore{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
   '.uic-sidebarMoreRow{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}',
-  '.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;font-size:13px;line-height:20px}',
-  '.uic-moreRow + .uic-moreRow{border-top:1px solid var(--dsw-alias-border-l2)}',
+  '.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;padding:0 8px;font-size:13px;line-height:20px}',
   '.uic-moreRowName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
   '.uic-moreRowMain{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
   '.uic-moreGlyph{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;overflow:hidden}',
@@ -165,11 +164,6 @@ function cleanFolded(folded, panels) {
 function computeFold(panels, settings) {
   if (settings?.sidebarMore?.foldAll === true) return panels.filter((id) => id !== 'plugins');
   return [];
-}
-
-/** The More launcher's text: "更多 (3)", and the bare label at zero. */
-function moreLabel(base, count) {
-  return count > 0 ? base + ' (' + count + ')' : base;
 }
 
 const PRESET_NAME_MAX = 40;
@@ -1741,8 +1735,6 @@ const moreTouched = new Map();
    panel's row once it is pinned away, so the icon has to be kept from the last
    time that row was on screen. */
 const moreGlyphs = new Map();
-const moreTitle = { title: null, original: null };
-
 /** Resolve a panel entry's label the way the host does (thunk first, then string, then id). */
 function entryLabelOf(entry) {
   const raw = entry?.options?.label ?? entry?.label;
@@ -1894,14 +1886,21 @@ function glyphCloneOf(row) {
       for (const match of raw.matchAll(/(?:#|url\()["']?([A-Za-z_][\w.:-]*)/g)) referenced.add(match[1]);
     }
   };
-  rememberRefs(clone);
-  if (typeof clone.querySelectorAll === 'function') {
-    try {
-      for (const tagged of Array.from(clone.querySelectorAll('*'))) rememberRefs(tagged);
-    } catch {
-      /* best effort */
+  /* Walk children instead of querySelectorAll: the selector engine is not
+     guaranteed on every node a browser hands back, and a missed child here
+     would drop an id that an icon's <use> still points at. */
+  const eachNode = (root, visit) => {
+    const stack = [root];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (current === null || current === undefined) continue;
+      visit(current);
+      const kids = current.children;
+      if (kids === undefined || kids === null) continue;
+      for (const kid of Array.from(kids)) stack.push(kid);
     }
-  }
+  };
+  eachNode(clone, rememberRefs);
   const dropId = (element) => {
     const name = element?.getAttribute?.('id');
     if (typeof name !== 'string' || name === '') return;
@@ -1912,14 +1911,7 @@ function glyphCloneOf(row) {
       /* best effort */
     }
   };
-  dropId(clone);
-  if (typeof clone.querySelectorAll === 'function') {
-    try {
-      for (const tagged of Array.from(clone.querySelectorAll('[id]'))) dropId(tagged);
-    } catch {
-      /* best effort */
-    }
-  }
+  eachNode(clone, dropId);
   return clone;
 }
 
@@ -2105,56 +2097,6 @@ function sidebarMoreReplay(entries, settings, storage) {
   return entries.filter((entry) => entry.pinned === true && wanted.has(entry.id)).map((entry) => entry.id);
 }
 
-/**
- * How many panels are really behind the More button, counted from the sidebar
- * instead of from our own intent record. Two things can hide a panel: the host
- * drops the row of a pinned panel, and our fold pass sets display:none on the
- * rest — so "panels we know about minus rows still on screen" is the only number
- * that cannot drift from what the user sees. Returns null when the sidebar is not
- * readable (collapsed, not mounted yet): the caller keeps the bare label rather
- * than inventing a number.
- */
-function foldedRowCount(doc, panels) {
-  if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return null;
-  const total = panels.filter((panel) => panel.id !== 'plugins').length;
-  if (total === 0) return 0;
-  let rows = [];
-  try {
-    rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
-  } catch {
-    rows = [];
-  }
-  if (rows.length === 0) return null;
-  /* Identify a row by the panel it draws: the aria-label is the rendered title,
-     which is what the host also uses for the row it removes. */
-  const byName = new Map();
-  for (const panel of panels) {
-    if (panel.label !== undefined && panel.label !== '') byName.set(String(panel.label), panel.id);
-    byName.set(String(panel.id), panel.id);
-  }
-  const hiddenInTree = (row) => {
-    let node = row;
-    for (let depth = 0; node !== null && node !== undefined && depth < 8; depth += 1) {
-      if (node.hidden === true) return true;
-      if (node.style?.display === 'none') return true;
-      node = node.parentElement ?? null;
-    }
-    return false;
-  };
-  let shown = 0;
-  for (const row of rows) {
-    const aria = row.getAttribute?.('aria-label') ?? '';
-    /* The launcher is a panel row too; it is never a panel behind itself. */
-    if (MORE_TITLES.has(aria)) continue;
-    const id = byName.get(aria) ?? null;
-    /* Rows we cannot name are not ours to count, and plugins never folds. */
-    if (id === null || id === 'plugins') continue;
-    if (hiddenInTree(row) === true) continue;
-    shown += 1;
-  }
-  return Math.max(0, total - shown);
-}
-
 /** Write one panel's pin through the host callback and keep the record honest. */
 function writeSidebarPin(id, pinned, entries, settings, storage) {
   if (sidebarWrite === null) return;
@@ -2200,12 +2142,19 @@ function SidebarMoreMenu(props) {
     }
   }
 
-  /* The host menu items live in the same list as our rows; borrowing their
-     class list and fixed dimensions makes every row look host-drawn. The
-     sample is taken a tick later so the official items exist by then. */
-  if (sampled === null && typeof setTimeout === 'function') {
-    setTimeout(() => setSampled(sampleMoreItem(doc)), 0);
-  }
+  /* The host menu items share this list, so borrowing their class list is what
+     makes our rows look host-drawn. The sample cannot wait for a setTimeout
+     tick: that painted the fallback row for one frame and the switch was
+     visible. React runs ref callbacks after the whole menu is in the DOM and
+     before the browser paints, so the first row's ref takes the sample there
+     and the fallback class never reaches the screen. */
+  const ensureSample = () => {
+    if (sampled !== null) return true;
+    const taken = sampleMoreItem(doc);
+    if (taken === null) return false;
+    setSampled(taken);
+    return true;
+  };
 
   /**
    * Flip one panel. `folded` is the state the row is showing: true means the
@@ -2243,6 +2192,7 @@ function SidebarMoreMenu(props) {
         type: 'button',
         className: rowClass,
         style: rowStyle,
+        ref: ensureSample,
         'data-uic-more-row': entry.id,
         onClick: () => { onOpen(entry.id); onDismiss(); },
       }, [
@@ -2284,13 +2234,12 @@ function SidebarMoreMenu(props) {
   ]);
 }
 
-/**
- * Paint the folded count onto the host's launcher row: find the More button by
- * its own aria-label, then rewrite only the title span. The aria-label stays
- * untouched (screen readers keep "更多"); a missing button is skipped
- * silently.
+/** Restore the host's own launcher label. Older builds painted a folded count
+ * onto the title span ("更多 (2)"); the counter is gone now, so this pass makes
+ * sure the span always reads exactly what the aria-label says. Idempotent: it
+ * only writes when the text differs, and it never adds a number itself.
  */
-function paintMoreCount(doc, panels, titleInfo) {
+function normalizeMoreTitle(doc) {
   if (doc === null || typeof doc.querySelectorAll !== 'function') return;
   let candidates = [];
   try {
@@ -2319,16 +2268,8 @@ function paintMoreCount(doc, panels, titleInfo) {
     }
   }
   if (title === null || title === undefined) return;
-  if (titleInfo.title !== null && titleInfo.title !== title) return;
-  if (titleInfo.title === null) {
-    titleInfo.title = title;
-    titleInfo.original = title.textContent ?? '';
-  }
-  const count = foldedRowCount(doc, panels);
-  /** The aria-label is the stable base; the title may already carry a painted count. */
   const base = launcher.getAttribute('aria-label') ?? '';
-  const wanted = count === null ? base : moreLabel(base, count);
-  if (title.textContent !== wanted) title.textContent = wanted;
+  if (title.textContent !== base) title.textContent = base;
 }
 
 function apply(ctx) {
@@ -2346,9 +2287,8 @@ function apply(ctx) {
     entriesOf('sidebar.panellist')
       .map((entry) => ({ id: String(entry?.options?.id ?? ''), label: entryLabelOf(entry) }))
       .filter((panel) => panel.id !== '');
-  const paintCount = () => paintMoreCount(doc, sidebarPanelsOf(), moreTitle);
-  const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);
-  ctx.effect(() => () => clearMoreGlyphs(), 'ui-controller: forget sampled glyphs');
+  const normalizeTitle = () => normalizeMoreTitle(doc);
+  const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);  ctx.effect(() => () => clearMoreGlyphs(), 'ui-controller: forget sampled glyphs');
 
   /* One slot only, and only after it is declared: the inject callback itself
      only fires once the host declares the slot, so the guard is belt and
@@ -2389,14 +2329,14 @@ function apply(ctx) {
   let moreObserver = null;
   if (doc !== null && typeof doc.body?.addEventListener === 'function' && typeof MutationObserver === 'function') {
     try {
-      moreObserver = new MutationObserver(() => { applyFold(); paintCount(); });
+      moreObserver = new MutationObserver(() => { applyFold(); normalizeTitle(); });
       moreObserver.observe(doc.body, { childList: true, subtree: true });
     } catch {
       moreObserver = null;
     }
   }
   applyFold();
-  paintCount();
+  normalizeTitle();
 
   let pickHandler = null;
 
@@ -2448,9 +2388,6 @@ function apply(ctx) {
       if (row.style !== undefined) row.style.display = original;
     }
     moreTouched.clear();
-    if (moreTitle.title !== null) moreTitle.title.textContent = moreTitle.original;
-    moreTitle.title = null;
-    moreTitle.original = null;
     sidebarWrite = null;
     sidebarPanels = [];
     sidebarReplayQueued = false;
@@ -2469,10 +2406,8 @@ function apply(ctx) {
     applyHidden();
     applyVisualOrder(doc, current, ordered);
     applyFold();
-    paintCount();
-  };
-
-  applyAll();
+    normalizeTitle();
+  };  applyAll();
   const timer = setInterval(applyAll, 2000);
   ctx.effect(() => () => clearInterval(timer), 'ui-controller: reapply timer');
   ctx.effect(
@@ -2590,9 +2525,9 @@ window.__ModuleLoader__.load({
       writeSidebarMore,
       cleanFolded,
       computeFold,
-      moreLabel,
       sidebarMoreReplay,
-      foldedRowCount,
+      normalizeMoreTitle,
+      glyphCloneOf,      glyphCloneOf,
       desiredFoldIds,
       foldedIdsOf,
       entryLabelOf,
@@ -2603,7 +2538,6 @@ window.__ModuleLoader__.load({
   mountMoreGlyph,
   panelRowOf,
       sampleMoreItem,
-      paintMoreCount,
       SidebarMoreMenu,
       DICTS,
     };
