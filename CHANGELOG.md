@@ -2,6 +2,18 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.3 — 2026-11-15
+
+### Fixed
+
+- **The number after More is the sidebar's own truth.** It used to come from
+  our fold record, while the rows actually off screen are decided by the host's
+  pin state — so a record naming two panels could sit next to five hidden rows
+  and paint `更多 (2)`. `foldedRowCount` now counts "panels we know about minus
+  rows still on screen", reading `display:none` on the row and on any wrapper
+  the fold pass hid. When the sidebar cannot be read (collapsed, not mounted) the
+  launcher keeps its bare label instead of guessing a zero.
+
 ## 0.2.2 — 2026-11-15
 
 ### Fixed

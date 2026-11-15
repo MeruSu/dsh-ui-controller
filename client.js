@@ -27,7 +27,7 @@
  * slots sort by `priority → order`, everything else by `priority` alone.
  */
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 
 const NS = 'uiController';
 const SECTION_ID = 'ui-controller';
@@ -1865,18 +1865,57 @@ function glyphCloneOf(row) {
     clone = null;
   }
   if (clone === null) return null;
-  /* A cloned SVG can carry ids; the clone root counts as well, because
-     querySelectorAll only sees descendants. A cloned wrapper could also still
-     name a host slot, which must never be duplicated. */
+  /* A cloned wrapper must never name a host slot twice. Ids are different: an
+     icon drawn by the host is usually an <svg> whose <use href="#name"> points
+     at a symbol, and stripping that symbol's id turns the icon into an empty
+     box - the broken glyphs seen in the More menu. Keep every id the drawing
+     itself refers to and drop only the decorative ones. */
   try {
-    clone.removeAttribute?.('id');
     clone.removeAttribute?.('data-slot');
   } catch {
-    /* ids are cosmetic in an icon */
+    /* best effort */
   }
+  const referenced = new Set();
+  const rememberRefs = (element) => {
+    if (element === null || element === undefined) return;
+    const names = [];
+    for (const key of ['href', 'xlink:href']) {
+      const value = element.getAttribute?.(key);
+      if (typeof value === 'string') names.push(value);
+    }
+    const style = element.getAttribute?.('style');
+    if (typeof style === 'string') names.push(style);
+    for (const value of element.getAttributeNames?.() ?? []) {
+      if (value === 'href' || value === 'xlink:href' || value === 'style') continue;
+      const raw = element.getAttribute?.(value);
+      if (typeof raw === 'string') names.push(raw);
+    }
+    for (const raw of names) {
+      for (const match of raw.matchAll(/(?:#|url\()["']?([A-Za-z_][\w.:-]*)/g)) referenced.add(match[1]);
+    }
+  };
+  rememberRefs(clone);
   if (typeof clone.querySelectorAll === 'function') {
     try {
-      for (const tagged of Array.from(clone.querySelectorAll('[id]'))) tagged.removeAttribute?.('id');
+      for (const tagged of Array.from(clone.querySelectorAll('*'))) rememberRefs(tagged);
+    } catch {
+      /* best effort */
+    }
+  }
+  const dropId = (element) => {
+    const name = element?.getAttribute?.('id');
+    if (typeof name !== 'string' || name === '') return;
+    if (referenced.has(name)) return;
+    try {
+      element.removeAttribute('id');
+    } catch {
+      /* best effort */
+    }
+  };
+  dropId(clone);
+  if (typeof clone.querySelectorAll === 'function') {
+    try {
+      for (const tagged of Array.from(clone.querySelectorAll('[id]'))) dropId(tagged);
     } catch {
       /* best effort */
     }
@@ -2066,10 +2105,54 @@ function sidebarMoreReplay(entries, settings, storage) {
   return entries.filter((entry) => entry.pinned === true && wanted.has(entry.id)).map((entry) => entry.id);
 }
 
-/** The count the launcher shows: folded ids that still name a live panel. */
-function sidebarMoreCount(panels, settings, storage) {
-  if (settings?.sidebarMore?.foldAll === true) return computeFold(panels, settings).length;
-  return cleanFolded(readSidebarMore(storage).folded, panels).length;
+/**
+ * How many panels are really behind the More button, counted from the sidebar
+ * instead of from our own intent record. Two things can hide a panel: the host
+ * drops the row of a pinned panel, and our fold pass sets display:none on the
+ * rest — so "panels we know about minus rows still on screen" is the only number
+ * that cannot drift from what the user sees. Returns null when the sidebar is not
+ * readable (collapsed, not mounted yet): the caller keeps the bare label rather
+ * than inventing a number.
+ */
+function foldedRowCount(doc, panels) {
+  if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return null;
+  const total = panels.filter((panel) => panel.id !== 'plugins').length;
+  if (total === 0) return 0;
+  let rows = [];
+  try {
+    rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
+  } catch {
+    rows = [];
+  }
+  if (rows.length === 0) return null;
+  /* Identify a row by the panel it draws: the aria-label is the rendered title,
+     which is what the host also uses for the row it removes. */
+  const byName = new Map();
+  for (const panel of panels) {
+    if (panel.label !== undefined && panel.label !== '') byName.set(String(panel.label), panel.id);
+    byName.set(String(panel.id), panel.id);
+  }
+  const hiddenInTree = (row) => {
+    let node = row;
+    for (let depth = 0; node !== null && node !== undefined && depth < 8; depth += 1) {
+      if (node.hidden === true) return true;
+      if (node.style?.display === 'none') return true;
+      node = node.parentElement ?? null;
+    }
+    return false;
+  };
+  let shown = 0;
+  for (const row of rows) {
+    const aria = row.getAttribute?.('aria-label') ?? '';
+    /* The launcher is a panel row too; it is never a panel behind itself. */
+    if (MORE_TITLES.has(aria)) continue;
+    const id = byName.get(aria) ?? null;
+    /* Rows we cannot name are not ours to count, and plugins never folds. */
+    if (id === null || id === 'plugins') continue;
+    if (hiddenInTree(row) === true) continue;
+    shown += 1;
+  }
+  return Math.max(0, total - shown);
 }
 
 /** Write one panel's pin through the host callback and keep the record honest. */
@@ -2207,7 +2290,7 @@ function SidebarMoreMenu(props) {
  * untouched (screen readers keep "更多"); a missing button is skipped
  * silently.
  */
-function paintMoreCount(doc, panels, settings, storageRef, titleInfo) {
+function paintMoreCount(doc, panels, titleInfo) {
   if (doc === null || typeof doc.querySelectorAll !== 'function') return;
   let candidates = [];
   try {
@@ -2241,10 +2324,10 @@ function paintMoreCount(doc, panels, settings, storageRef, titleInfo) {
     titleInfo.title = title;
     titleInfo.original = title.textContent ?? '';
   }
-  const count = sidebarMoreCount(panels.map((panel) => panel.id), settings, storageRef);
+  const count = foldedRowCount(doc, panels);
   /** The aria-label is the stable base; the title may already carry a painted count. */
   const base = launcher.getAttribute('aria-label') ?? '';
-  const wanted = moreLabel(base, count);
+  const wanted = count === null ? base : moreLabel(base, count);
   if (title.textContent !== wanted) title.textContent = wanted;
 }
 
@@ -2263,7 +2346,7 @@ function apply(ctx) {
     entriesOf('sidebar.panellist')
       .map((entry) => ({ id: String(entry?.options?.id ?? ''), label: entryLabelOf(entry) }))
       .filter((panel) => panel.id !== '');
-  const paintCount = () => paintMoreCount(doc, sidebarPanelsOf(), readSettings(), storage(), moreTitle);
+  const paintCount = () => paintMoreCount(doc, sidebarPanelsOf(), moreTitle);
   const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);
   ctx.effect(() => () => clearMoreGlyphs(), 'ui-controller: forget sampled glyphs');
 
@@ -2306,14 +2389,14 @@ function apply(ctx) {
   let moreObserver = null;
   if (doc !== null && typeof doc.body?.addEventListener === 'function' && typeof MutationObserver === 'function') {
     try {
-      moreObserver = new MutationObserver(() => { paintCount(); applyFold(); });
+      moreObserver = new MutationObserver(() => { applyFold(); paintCount(); });
       moreObserver.observe(doc.body, { childList: true, subtree: true });
     } catch {
       moreObserver = null;
     }
   }
-  paintCount();
   applyFold();
+  paintCount();
 
   let pickHandler = null;
 
@@ -2385,8 +2468,8 @@ function apply(ctx) {
     const current = readSettings();
     applyHidden();
     applyVisualOrder(doc, current, ordered);
-    paintCount();
     applyFold();
+    paintCount();
   };
 
   applyAll();
@@ -2509,7 +2592,7 @@ window.__ModuleLoader__.load({
       computeFold,
       moreLabel,
       sidebarMoreReplay,
-      sidebarMoreCount,
+      foldedRowCount,
       desiredFoldIds,
       foldedIdsOf,
       entryLabelOf,
