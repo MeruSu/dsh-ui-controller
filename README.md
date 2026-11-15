@@ -186,7 +186,7 @@ Two sentences that belong in any answer about ordering:
 node --check client.js
 node --check index.js
 node --check test/classify.test.mjs
-node test/classify.test.mjs        # expect: PASS — 38 groups
+node test/classify.test.mjs        # expect: PASS — 40 groups
 node ..\..\cangku\tmp\261114_gate_ui_controller.mjs   # static gate, separate script
 ```
 
@@ -205,7 +205,11 @@ what the record and `foldAll` ask for; the count label repaints through the
 `nav.panelList` ancestor and only when its text changes; folding hides the live
 rows and restores them on the way out, leaving rows it cannot identify alone; and
 the menu borrows a live host item's class list and computed size instead of any
-hardcoded name.
+hardcoded name; each menu row copies the panel glyph from the live sidebar row
+(runtime clone taken from the drawing inside the host's slot anchor, ids and
+`data-slot` stripped, refilled on every mount, remembered per panel so a folded
+panel keeps its icon after the host stops rendering its row) and folding hides
+the wrapper that owns both the icon and the text, never `nav`.
 
 ## Known limits
 

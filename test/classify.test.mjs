@@ -87,11 +87,35 @@ function element(tagName) {
       }
       return null;
     },
-    querySelectorAll() {
-      return [];
+    querySelectorAll(selector) {
+      if (selector !== '[id]') return [];
+      const found = [];
+      const stack = [...node.children];
+      while (stack.length > 0) {
+        const item = stack.pop();
+        if (typeof item.getAttribute === 'function' && item.getAttribute('id') !== null) found.push(item);
+        if (Array.isArray(item.children)) stack.push(...item.children);
+      }
+      return found;
     },
     querySelector() {
       return null;
+    },
+    get firstChild() {
+      return node.children.length > 0 ? node.children[0] : null;
+    },
+    get firstElementChild() {
+      const first = node.children.length > 0 ? node.children[0] : null;
+      return first !== null && typeof first.getAttribute === 'function' ? first : null;
+    },
+    cloneNode(deep) {
+      const copy = element(node.tagName);
+      for (const [name, value] of node.attributes) copy.attributes.set(name, value);
+      copy.className = node.className;
+      copy.id = node.id;
+      copy.textContent = node.textContent;
+      if (deep === true) for (const child of node.children) copy.appendChild(child.cloneNode(true));
+      return copy;
     },
     addEventListener() {},
     removeEventListener() {},
@@ -1163,6 +1187,176 @@ test('sidebar more: the settings page carries the foldAll switch', () => {
   assert.equal(box.length, 1, 'exactly one foldAll checkbox');
   assert.equal(box[0].props['data-uic-sidebar-more-foldall'], 'true', 'foldAll defaults on');
   for (const dispose of ctx.disposes) dispose();
+});
+
+
+test('sidebar more: the menu row borrows the host glyph and stays a copy', () => {
+  resetStorage();
+  const rowA = element('button');
+  rowA.setAttribute('class', 'panelRow');
+  rowA.setAttribute('aria-label', 'Panels A');
+  const titleA = element('span');
+  titleA.setAttribute('class', 'panelTitle');
+  titleA.textContent = 'Panels A';
+  rowA.appendChild(titleA);
+  const glyphA = element('span');
+  glyphA.setAttribute('class', 'panelGlyph');
+  const svgA = element('svg');
+  svgA.setAttribute('id', 'host-icon');
+  glyphA.appendChild(svgA);
+  rowA.appendChild(glyphA);
+  rowA.querySelector = (selector) => {
+    if (selector === 'span[class*="panelGlyph"]') return glyphA;
+    if (selector === 'span[class*="panelTitle"]') return titleA;
+    return null;
+  };
+  const rowB = element('button');
+  rowB.setAttribute('class', 'panelRow');
+  rowB.setAttribute('aria-label', 'Panels B');
+  rowB.querySelector = () => null;
+  const doc = {
+    querySelectorAll: (selector) =>
+      selector === 'nav[class*="panelList"] button[class*="panelRow"]' ? [rowA, rowB] : [],
+  };
+  const placeholder = element('span');
+  assert.equal(api.mountMoreGlyph(placeholder, doc, 'Panels A'), true, 'the host glyph is copied');
+  assert.equal(placeholder.children.length, 1, 'exactly one clone');
+  assert.equal(placeholder.children[0].tagName, 'SVG', 'the first child of the host glyph is what gets cloned');
+  assert.equal(placeholder.children[0].getAttribute('id'), null, 'ids are stripped from the clone');
+  assert.equal(api.mountMoreGlyph(placeholder, doc, 'Panels A'), true, 'a second mount still succeeds');
+  assert.equal(placeholder.children.length, 1, 'a remount replaces the clone instead of stacking');
+  assert.equal(svgA.getAttribute('id'), 'host-icon', 'the host node itself is untouched');
+  assert.equal(api.mountMoreGlyph(placeholder, doc, 'Panels B'), false, 'no glyph on the host row means no clone');
+  assert.equal(placeholder.children.length, 0, 'the placeholder is left empty');
+  assert.equal(api.mountMoreGlyph(null, doc, 'Panels A'), false, 'no placeholder, no crash');
+  api.clearMoreGlyphs();
+  assert.equal(api.mountMoreGlyph(placeholder, null, 'Panels A'), false, 'no document and nothing remembered, no crash');
+  /* The host stops rendering a row once its panel is pinned away; the icon has
+     to survive that, so the last clone is remembered per panel id. */
+  api.clearMoreGlyphs();
+  const emptyDoc = { querySelectorAll: () => [] };
+  assert.equal(api.mountMoreGlyph(placeholder, emptyDoc, 'Panels A', 'a'), false, 'nothing remembered yet');
+  assert.equal(api.mountMoreGlyph(placeholder, doc, 'Panels A', 'a'), true, 'a live row is captured');
+  assert.equal(api.mountMoreGlyph(placeholder, emptyDoc, 'Panels A', 'a'), true, 'the remembered glyph fills the slot');
+  assert.equal(placeholder.children.length, 1, 'still exactly one clone');
+  assert.equal(placeholder.children[0].tagName, 'SVG');
+  api.clearMoreGlyphs();
+  assert.equal(api.mountMoreGlyph(placeholder, emptyDoc, 'Panels A', 'a'), false, 'forgetting the glyph empties the slot');
+  assert.equal(placeholder.children.length, 0);
+  /* The fold pass runs while the row is still rendered; that is the moment the
+     icon has to be remembered, because pinning the panel away removes the row. */
+  /* The real host puts its slot anchor (display:contents) between the glyph span
+     and the drawing: the clone must be the drawing, never a duplicated slot. */
+  const anchor = element('div');
+  anchor.setAttribute('data-slot', 'sidebar.panellist');
+  anchor.setAttribute('style', 'display: contents;');
+  const nestedSvg = element('svg');
+  nestedSvg.setAttribute('id', 'nested-icon');
+  anchor.appendChild(nestedSvg);
+  anchor.querySelector = (selector) => (selector === 'svg, img, canvas' ? nestedSvg : null);
+  const wrapped = element('span');
+  wrapped.setAttribute('class', 'panelGlyph');
+  wrapped.appendChild(anchor);
+  assert.equal(api.glyphIconNodeOf(wrapped), nestedSvg, 'the drawing inside the slot anchor is the icon');
+  const wrappedRow = element('button');
+  wrappedRow.setAttribute('class', 'panelRow');
+  wrappedRow.setAttribute('aria-label', 'Panels C');
+  wrappedRow.appendChild(wrapped);
+  wrappedRow.querySelector = (selector) => (selector === 'span[class*="panelGlyph"]' ? wrapped : null);
+  const wrappedDoc = {
+    querySelectorAll: (selector) =>
+      selector === 'nav[class*="panelList"] button[class*="panelRow"]' ? [wrappedRow] : [],
+  };
+  assert.equal(api.mountMoreGlyph(placeholder, wrappedDoc, 'Panels C', 'c'), true, 'a wrapped glyph still clones');
+  assert.equal(placeholder.children[0].tagName, 'SVG', 'the clone is the drawing, not the anchor');
+  assert.equal(placeholder.children[0].getAttribute('data-slot'), null, 'no slot marker is duplicated');
+  assert.equal(placeholder.children[0].getAttribute('id'), null, 'nested ids are stripped too');
+  api.clearMoreGlyphs();
+  api.applyFoldState(doc, [{ id: 'a', label: 'Panels A' }], api.defaultSettings(), globalThis.localStorage, new Map());
+  assert.equal(
+    api.mountMoreGlyph(placeholder, emptyDoc, 'Panels A', 'a'),
+    true,
+    'the fold pass remembers the glyph before the row disappears',
+  );
+  assert.equal(placeholder.children.length, 1, 'the remembered clone is what the slot gets');
+  api.clearMoreGlyphs();
+  assert.equal(api.panelRowOf(doc, 'Panels B'), rowB, 'the row is found by its aria-label');
+  assert.equal(api.panelRowOf(doc, 'Nobody'), null, 'an unknown panel has no row');
+  const menu = api.SidebarMoreMenu({
+    entries: [{ id: 'a', label: 'Panels A', pinned: true }],
+    onOpen: () => {},
+    onPinnedChange: () => {},
+    onDismiss: () => {},
+  });
+  const row = menu.children.find((child) => child.props?.['data-uic-more-row'] === 'a');
+  const main = row.props.children[0];
+  const slot = main.props.children.find((child) => child.props?.['data-uic-more-glyph'] === 'a');
+  assert.ok(slot, 'the row reserves a glyph slot left of the name');
+  assert.equal(typeof slot.props.ref, 'function', 'the slot is filled by a ref once it is in the document');
+  const original = globalThis.document.querySelectorAll;
+  globalThis.document.querySelectorAll = doc.querySelectorAll;
+  try {
+    const mounted = element('span');
+    slot.props.ref(mounted);
+    assert.equal(mounted.children.length, 1, 'mounting the slot fills it with the clone');
+    slot.props.ref(mounted);
+    assert.equal(mounted.children.length, 1, 'a re-render refills it without stacking');
+    slot.props.ref(null);
+  } finally {
+    globalThis.document.querySelectorAll = original;
+  }
+});
+
+test('sidebar more: folding takes the icon with the text', () => {
+  resetStorage();
+  const inner = element('button');
+  inner.setAttribute('class', 'panelRow');
+  inner.setAttribute('aria-label', 'Panels A');
+  const innerGlyph = element('span');
+  innerGlyph.setAttribute('class', 'panelGlyph');
+  inner.appendChild(innerGlyph);
+  inner.querySelector = (selector) => (selector === 'span[class*="panelGlyph"]' ? innerGlyph : null);
+  const wrap = element('div');
+  const outerGlyph = element('span');
+  outerGlyph.setAttribute('class', 'panelGlyph');
+  wrap.appendChild(outerGlyph);
+  const outside = element('button');
+  outside.setAttribute('class', 'panelRow');
+  outside.setAttribute('aria-label', 'Panels B');
+  outside.querySelector = () => null;
+  wrap.appendChild(outside);
+  wrap.querySelector = (selector) => (selector === 'span[class*="panelGlyph"]' ? outerGlyph : null);
+  const nav = element('nav');
+  nav.setAttribute('class', 'panelList');
+  nav.appendChild(inner);
+  nav.appendChild(wrap);
+  const doc = {
+    querySelectorAll: (selector) =>
+      selector === 'nav[class*="panelList"] button[class*="panelRow"]' ? [inner, outside] : [],
+  };
+  const panels = [
+    { id: 'a', label: 'Panels A' },
+    { id: 'b', label: 'Panels B' },
+  ];
+  const touched = new Map();
+  const on = api.defaultSettings();
+  api.applyFoldState(doc, panels, on, globalThis.localStorage, touched);
+  assert.equal(api.foldUnitOf(inner), inner, 'a row that owns its glyph is its own unit');
+  assert.equal(api.foldUnitOf(outside), wrap, 'an icon beside the button folds through the wrapper');
+  assert.equal(inner.style.display, 'none', 'the whole row goes, icon included');
+  assert.equal(wrap.style.display, 'none', 'the wrapper goes, so the icon goes too');
+  assert.equal(outside.style.display, undefined, 'the button is not touched when the wrapper carries the icon');
+  assert.equal(nav.style.display, undefined, 'nav is never hidden');
+  const off = { ...on, sidebarMore: { foldAll: false } };
+  api.applyFoldState(doc, panels, off, globalThis.localStorage, touched);
+  assert.equal(inner.style.display, '', 'the row comes back');
+  assert.equal(wrap.style.display, '', 'the wrapper comes back');
+  assert.equal(touched.size, 0, 'nothing stays tracked after unfolding');
+  const orphan = element('button');
+  orphan.setAttribute('class', 'panelRow');
+  orphan.querySelector = () => null;
+  nav.appendChild(orphan);
+  assert.equal(api.foldUnitOf(orphan), orphan, 'a row directly under nav is its own unit');
 });
 
 

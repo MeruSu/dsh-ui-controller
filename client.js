@@ -27,7 +27,7 @@
  * slots sort by `priority → order`, everything else by `priority` alone.
  */
 
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 
 const NS = 'uiController';
 const SECTION_ID = 'ui-controller';
@@ -81,6 +81,9 @@ const PAGE_CSS = [
   '.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 2px;font-size:13px;line-height:20px}',
   '.uic-moreRow + .uic-moreRow{border-top:1px solid var(--dsw-alias-border-l2)}',
   '.uic-moreRowName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+  '.uic-moreRowMain{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
+  '.uic-moreGlyph{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;overflow:hidden}',
+  '.uic-moreGlyph>svg,.uic-moreGlyph>img{width:16px;height:16px;display:block}',
   '.uic-moreAction{flex:none;padding:2px 8px;font-size:12px;border:1px solid var(--dsw-alias-border-l4);border-radius:6px;cursor:pointer}',
   '.uic-moreAction:hover{background:var(--dsw-alias-bg-layer-2)}',
   '.uic-zone{border-top:.5px solid var(--dsw-alias-border-l2);padding:2px 0}',
@@ -1734,6 +1737,10 @@ let sidebarReplayQueued = false;
 
 /** Elements this session hid and the launcher title it rewrote; both are restored on teardown. */
 const moreTouched = new Map();
+/* Cloned panel glyphs, remembered per panel id: the host stops rendering a
+   panel's row once it is pinned away, so the icon has to be kept from the last
+   time that row was on screen. */
+const moreGlyphs = new Map();
 const moreTitle = { title: null, original: null };
 
 /** Resolve a panel entry's label the way the host does (thunk first, then string, then id). */
@@ -1759,6 +1766,184 @@ function foldedIdsOf(panels, settings, storageRef) {
     settings,
     storageRef,
   ).filter((id) => id !== 'plugins');
+}
+
+/**
+ * The host sidebar row for one panel: matched by its own aria-label first, then
+ * by the rendered title. Returns null while the row is not on screen yet.
+ */
+function panelRowOf(doc, label) {
+  if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return null;
+  let rows = [];
+  try {
+    rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
+  } catch {
+    rows = [];
+  }
+  for (const row of rows) {
+    const aria = row.getAttribute?.('aria-label') ?? '';
+    if (aria !== '' && aria === label) return row;
+    if (typeof row.querySelector !== 'function') continue;
+    try {
+      const title = row.querySelector('span[class*="panelTitle"]');
+      if (title !== null && title !== undefined && (title.textContent ?? '') === label) return row;
+    } catch {
+      /* a row we cannot read is simply not a match */
+    }
+  }
+  return null;
+}
+
+/**
+ * The element that has to disappear when a panel folds. Usually that is the row
+ * button itself (the host draws the glyph inside it), but a panel whose icon is
+ * rendered beside the button would leave the icon behind, so the wrapper that
+ * holds both is hidden instead. `nav` is never a folding unit.
+ */
+function foldUnitOf(row) {
+  if (row === null || row === undefined) return null;
+  let glyph = null;
+  try {
+    glyph = typeof row.querySelector === 'function' ? row.querySelector('span[class*="panelGlyph"]') : null;
+  } catch {
+    glyph = null;
+  }
+  if (glyph !== null && glyph !== undefined) return row;
+  const parent = row.parentElement ?? null;
+  if (parent === null) return row;
+  if (String(parent.tagName ?? '').toUpperCase() === 'NAV') return row;
+  let parentGlyph = null;
+  try {
+    parentGlyph = typeof parent.querySelector === 'function' ? parent.querySelector('span[class*="panelGlyph"]') : null;
+  } catch {
+    parentGlyph = null;
+  }
+  return parentGlyph !== null && parentGlyph !== undefined ? parent : row;
+}
+
+/**
+ * The node that actually draws the icon inside a host glyph span. The host puts
+ * its slot anchor (`div[data-slot]` with `display: contents`) in between, so
+ * the first child is a 0x0 wrapper; cloning that would duplicate a slot marker.
+ * Returns the first svg / img / canvas inside it, or the first child itself when
+ * the icon is drawn some other way.
+ */
+function glyphIconNodeOf(glyph) {
+  if (glyph === null || glyph === undefined) return null;
+  const start = glyph.firstElementChild ?? null;
+  if (start === null) return null;
+  if (typeof start.querySelector === 'function') {
+    try {
+      const drawing = start.querySelector('svg, img, canvas');
+      if (drawing !== null && drawing !== undefined) return drawing;
+    } catch {
+      return start;
+    }
+  }
+  return start;
+}
+
+/**
+ * Deep-clone the glyph inside one live host row and strip ids (a second copy
+ * would collide in the document). Returns null when the row draws no glyph.
+ */
+function glyphCloneOf(row) {
+  if (row === null || row === undefined) return null;
+  let glyph = null;
+  try {
+    glyph = typeof row.querySelector === 'function' ? row.querySelector('span[class*="panelGlyph"]') : null;
+  } catch {
+    glyph = null;
+  }
+  if (glyph === null || glyph === undefined) return null;
+  const source = glyphIconNodeOf(glyph);
+  if (source === null || source === undefined) return null;
+  let clone = null;
+  try {
+    clone = typeof source.cloneNode === 'function' ? source.cloneNode(true) : null;
+  } catch {
+    clone = null;
+  }
+  if (clone === null) return null;
+  /* A cloned SVG can carry ids; the clone root counts as well, because
+     querySelectorAll only sees descendants. A cloned wrapper could also still
+     name a host slot, which must never be duplicated. */
+  try {
+    clone.removeAttribute?.('id');
+    clone.removeAttribute?.('data-slot');
+  } catch {
+    /* ids are cosmetic in an icon */
+  }
+  if (typeof clone.querySelectorAll === 'function') {
+    try {
+      for (const tagged of Array.from(clone.querySelectorAll('[id]'))) tagged.removeAttribute?.('id');
+    } catch {
+      /* best effort */
+    }
+  }
+  return clone;
+}
+
+/** Remember one panel's glyph while its row is still rendered. */
+function captureMoreGlyph(panelId, row) {
+  const id = String(panelId ?? '');
+  if (id === '') return null;
+  const cached = moreGlyphs.get(id) ?? null;
+  if (cached !== null) return cached;
+  const clone = glyphCloneOf(row);
+  if (clone === null) return null;
+  moreGlyphs.set(id, clone);
+  return clone;
+}
+
+/** Drop every remembered glyph (teardown, and tests). */
+function clearMoreGlyphs() {
+  moreGlyphs.clear();
+}
+
+/**
+ * Copy the host's own panel glyph into one of our menu rows. The icon is the
+ * first child of `span[class*="panelGlyph"]` inside the panel row — cloned at
+ * runtime, never shipped here, so a host redesign keeps working. The
+ * placeholder is emptied first, which makes the host remounting the menu
+ * idempotent; a missing glyph leaves it empty and returns false (silent).
+ */
+function mountMoreGlyph(placeholder, doc, label, panelId) {
+  if (placeholder === null || placeholder === undefined) return false;
+  try {
+    while (placeholder.firstChild !== null && placeholder.firstChild !== undefined) {
+      placeholder.removeChild(placeholder.firstChild);
+    }
+  } catch {
+    /* a placeholder we cannot clear is left as it is */
+  }
+  const row = panelRowOf(doc, label);
+  /* A live row is the freshest source and also refreshes the memory; once the
+     host pins a panel away its row disappears, so the remembered clone is what
+     keeps the icon in our menu. */
+  let source = null;
+  if (row !== null) {
+    const fresh = glyphCloneOf(row);
+    if (fresh !== null) {
+      moreGlyphs.set(String(panelId ?? label), fresh);
+      source = fresh;
+    }
+  }
+  if (source === null) source = moreGlyphs.get(String(panelId ?? label)) ?? null;
+  if (source === null) return false;
+  let clone = null;
+  try {
+    clone = typeof source.cloneNode === 'function' ? source.cloneNode(true) : null;
+  } catch {
+    clone = null;
+  }
+  if (clone === null) return false;
+  try {
+    placeholder.appendChild(clone);
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -1792,14 +1977,26 @@ function applyFoldState(doc, panels, settings, storageRef, touched) {
     }
     const id = byLabel.get(label) ?? byLabel.get(titleText) ?? null;
     if (id === null) continue;
+    /* Remember the icon before this row can disappear from the sidebar. */
+    captureMoreGlyph(id, row);
     const hide = folded.has(id);
-    const current = row.style?.display ?? '';
+    /* Hide whatever actually wraps both the icon and the text; a bare row button
+       is the normal case, a wrapper is used when the host draws the glyph beside
+       the button. `nav` is never hidden. */
+    const unit = foldUnitOf(row);
+    if (unit === null) continue;
+    const current = unit.style?.display ?? '';
     if (hide === true && current !== 'none') {
-      if (touched.has(row) === false) touched.set(row, current);
-      row.style.display = 'none';
-    } else if (hide === false && touched.has(row) === true) {
-      row.style.display = touched.get(row);
-      touched.delete(row);
+      if (touched.has(unit) === false) touched.set(unit, current);
+      unit.style.display = 'none';
+    } else if (hide === false) {
+      for (const candidate of [unit, row, row.parentElement ?? null]) {
+        if (candidate === null || candidate === undefined) continue;
+        if (touched.has(candidate) === true) {
+          candidate.style.display = touched.get(candidate);
+          touched.delete(candidate);
+        }
+      }
     }
   }
 }
@@ -1966,7 +2163,21 @@ function SidebarMoreMenu(props) {
         'data-uic-more-row': entry.id,
         onClick: () => { onOpen(entry.id); onDismiss(); },
       }, [
-        node('span', { key: 'name', className: 'uic-moreRowName' }, entry.label),
+        node('span', { key: 'main', className: 'uic-moreRowMain' }, [
+          node('span', {
+            key: 'glyph',
+            className: 'uic-moreGlyph',
+            'data-uic-more-glyph': entry.id,
+            /* The host owns the icon: copy it from the live sidebar row once this
+               placeholder is in the document. Refilled on every mount, so a host
+               remount cannot stack copies. */
+            ref: (element) => {
+              if (element === null || element === undefined) return;
+              mountMoreGlyph(element, doc, entry.label, entry.id);
+            },
+          }, []),
+          node('span', { key: 'name', className: 'uic-moreRowName' }, entry.label),
+        ]),
         node('span', {
           key: 'toggle',
           className: 'uic-moreToggle',
@@ -2054,6 +2265,7 @@ function apply(ctx) {
       .filter((panel) => panel.id !== '');
   const paintCount = () => paintMoreCount(doc, sidebarPanelsOf(), readSettings(), storage(), moreTitle);
   const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);
+  ctx.effect(() => () => clearMoreGlyphs(), 'ui-controller: forget sampled glyphs');
 
   /* One slot only, and only after it is declared: the inject callback itself
      only fires once the host declares the slot, so the guard is belt and
@@ -2302,6 +2514,11 @@ window.__ModuleLoader__.load({
       foldedIdsOf,
       entryLabelOf,
       applyFoldState,
+  clearMoreGlyphs,
+  foldUnitOf,
+  glyphIconNodeOf,
+  mountMoreGlyph,
+  panelRowOf,
       sampleMoreItem,
       paintMoreCount,
       SidebarMoreMenu,

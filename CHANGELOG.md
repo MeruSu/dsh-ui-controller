@@ -2,6 +2,21 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.2 — 2026-11-15
+
+### Fixed
+
+- **The More menu rows carry the panel's own icon.** The icon is cloned at
+  runtime from the live sidebar row — the first child of
+  `span[class*="panelGlyph"]` — into a reserved slot left of the name, so no
+  SVG is shipped here and no host class name is hardcoded. The slot is emptied
+  before each fill (a host remount cannot stack copies), ids are stripped from
+  the clone, and a panel without a readable glyph keeps an empty slot silently.
+- **Folding takes the icon with the text.** `applyFoldState` now hides the
+  element that actually wraps both: the row button normally, or the wrapper when
+  the host draws the glyph beside the button. `nav` is never hidden, and
+  unfolding restores every element it touched.
+
 ## 0.2.1 — 2026-11-15
 
 ### Fixed
