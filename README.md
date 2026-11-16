@@ -186,7 +186,7 @@ Two sentences that belong in any answer about ordering:
 node --check client.js
 node --check index.js
 node --check test/classify.test.mjs
-node test/classify.test.mjs        # expect: PASS — 43 groups
+node test/classify.test.mjs        # expect: PASS — 44 groups
 node ..\..\cangku\tmp\261114_gate_ui_controller.mjs   # static gate, separate script
 ```
 

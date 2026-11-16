@@ -2,6 +2,14 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.5 — 2026-11-17
+### Changed
+- The 127 module-level declarations now live inside the loader factory: the
+  harness concatenates every plugin's client into one shared module, so a bare
+  top-level `const NS` can collide with another plugin and take the whole page
+  down (`Identifier 'NS' has already been declared`). Top level is comments and
+  the `load()` call only.
+
 ## 0.2.4 — 2026-11-15
 ### Changed
 - The launcher never shows a folded count anymore (user m20715); the counter

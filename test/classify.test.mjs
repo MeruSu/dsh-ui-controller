@@ -1434,6 +1434,25 @@ test('sidebar more: a clone keeps the ids its own drawing references', () => {
   );
 });
 
+test('a host without a settings page gets no page instead of a crash', () => {
+  resetStorage();
+  /* `ui-settings: enabled: false` is a legal profile: `settings.section` is then
+   * never declared. Registering into it throws, and a throwing entry takes the
+   * whole web boot down — measured on meru-test 2026-11-17. */
+  const ctx = fakeCtx({});
+  const injected = [];
+  ctx.scope.slots.spec = () => undefined;
+  ctx.scope.slots.inject = (key, callback) => {
+    injected.push(key);
+    callback();
+    return () => {};
+  };
+  api.apply(ctx.scope, {});
+  assert.ok(injected.includes('settings.section'), 'the slot was asked for');
+  assert.equal(ctx.registered.length, 0, 'nothing is registered into a slot that does not exist');
+  for (const dispose of ctx.disposes) dispose();
+});
+
 
 console.log('');
 if (failed > 0) {
