@@ -2,6 +2,21 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.6 — 2026-11-17
+### Added
+- **Chat scroll damping** (user m21832: 「uic里加个功能，给聊天页的滑动加个阻尼」).
+  A wheel over `[data-conversation-scroll]` is eased with an exponential step in
+  `requestAnimationFrame` instead of jumping; `deltaMode` 0/1/2 are normalised
+  (px / 16px per line / 90% of the viewport), and strength 1–5 maps to
+  `k = [0.10, 0.14, 0.18, 0.24, 0.32]`. New settings group 对话区滚动 / Chat
+  scrolling with two live controls: `chatScroll.damping` (default on) and a
+  strength stepper (default 3).
+- The easing never fights the host: any `scroll` landing more than 2px from the
+  value we last wrote cancels it (autofollow during streaming wins), top/bottom
+  wheels are left to the page so native overscroll survives, and nested scrollers
+  (terminals, overflowing code blocks, inner lists) keep their own wheel.
+  `prefers-reduced-motion: reduce` installs no listener at all.
+
 ## 0.2.5 — 2026-11-17
 ### Changed
 - The 127 module-level declarations now live inside the loader factory: the

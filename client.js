@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-ui-controller',
   factory(require) {
 
-    const VERSION = '0.2.5';
+    const VERSION = '0.2.6';
 
     const NS = 'uiController';
     const SECTION_ID = 'ui-controller';
@@ -45,6 +45,30 @@ window.__ModuleLoader__.load({
     const HIDDEN_ATTR = 'data-uic-hidden';
     const STYLE_ID = 'ui-controller-style';
     const ROW_ATTR = 'data-uic-row';
+
+    /* Chat scroll damping (0.2.6).
+       The chat scroller is the host's `[data-conversation-scroll]` box — the class
+       next to it is hashed, so the data attribute is the only stable handle.
+       `CHAT_SCROLL_K` is the whole strength→speed table: index = strength - 1. */
+    const CHAT_SCROLL_SELECTOR = '[data-conversation-scroll]';
+    const CHAT_SCROLL_K = [0.1, 0.14, 0.18, 0.24, 0.32];
+    const CHAT_SCROLL_DEFAULT_STRENGTH = 3;
+    const CHAT_SCROLL_LINE_PX = 16;
+    const CHAT_SCROLL_PAGE_RATIO = 0.9;
+    const CHAT_SCROLL_SETTLE_PX = 1;
+    const CHAT_SCROLL_HOST_DRIFT_PX = 2;
+    const CHAT_SCROLL_CANCEL_KEYS = new Set([
+      'PageUp',
+      'PageDown',
+      'Home',
+      'End',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+      ' ',
+      'Spacebar',
+    ]);
 
     const HIDE_CSS = [
       '[' + HIDDEN_ATTR + '="1"]{display:none !important}',
@@ -307,6 +331,48 @@ window.__ModuleLoader__.load({
       return Math.min(max, Math.max(min, value));
     }
 
+    /* ------------------------------------------------- chat scroll damping maths */
+
+    /** One wheel tick in pixels: lines and pages become px so the rest can stay dumb. */
+    function normalizeWheelDelta(delta, deltaMode, clientHeight) {
+      const value = Number.isFinite(delta) ? delta : 0;
+      if (deltaMode === 1) return value * CHAT_SCROLL_LINE_PX;
+      if (deltaMode === 2) return value * Math.max(0, Number(clientHeight) || 0) * CHAT_SCROLL_PAGE_RATIO;
+      return value;
+    }
+
+    /** One exponential easing step; `done` means "land on target exactly". */
+    function dampNext(cur, target, k) {
+      const from = Number.isFinite(cur) ? cur : 0;
+      const to = Number.isFinite(target) ? target : from;
+      const ratio = Number.isFinite(k) ? clamp(k, 0.01, 0.99) : CHAT_SCROLL_K[CHAT_SCROLL_DEFAULT_STRENGTH - 1];
+      const gap = to - from;
+      if (Math.abs(gap) < CHAT_SCROLL_SETTLE_PX) return { next: to, done: true };
+      return { next: from + gap * ratio, done: false };
+    }
+
+    function clampScrollTop(value, max) {
+      const top = Number.isFinite(value) ? value : 0;
+      const limit = Number.isFinite(max) ? Math.max(0, max) : 0;
+      return clamp(top, 0, limit);
+    }
+
+    /** Strength 1–5 → k. Anything else falls back to the shipped default. */
+    function strengthToK(strength) {
+      const index = Math.round(Number(strength));
+      if (Number.isFinite(index) === false) return CHAT_SCROLL_K[CHAT_SCROLL_DEFAULT_STRENGTH - 1];
+      return CHAT_SCROLL_K[clamp(index, 1, CHAT_SCROLL_K.length) - 1];
+    }
+
+    function sanitizeChatScroll(raw) {
+      const base = { damping: true, strength: CHAT_SCROLL_DEFAULT_STRENGTH };
+      if (isPlainObject(raw) === false) return base;
+      return {
+        damping: raw.damping !== false,
+        strength: clamp(Math.round(Number(raw.strength) || CHAT_SCROLL_DEFAULT_STRENGTH), 1, CHAT_SCROLL_K.length),
+      };
+    }
+
     function catalogByKey() {
       const map = new Map();
       for (const slot of SLOT_CATALOG) map.set(slot.key, slot);
@@ -326,6 +392,7 @@ window.__ModuleLoader__.load({
         presets: {},
         activePreset: null,
         sidebarMore: { foldAll: true },
+        chatScroll: { damping: true, strength: CHAT_SCROLL_DEFAULT_STRENGTH },
       };
     }
 
@@ -424,6 +491,7 @@ window.__ModuleLoader__.load({
       next.presets = sanitizePresets(raw.presets);
       next.activePreset = typeof raw.activePreset === 'string' && hasOwn(next.presets, raw.activePreset) ? raw.activePreset : null;
       next.sidebarMore = isPlainObject(raw.sidebarMore) ? { foldAll: raw.sidebarMore.foldAll !== false } : { foldAll: true };
+      next.chatScroll = sanitizeChatScroll(raw.chatScroll);
       return next;
     }
 
@@ -512,6 +580,7 @@ window.__ModuleLoader__.load({
         presets: isPlainObject(patch.presets) ? patch.presets : base.presets,
         activePreset: hasOwn(patch, 'activePreset') ? patch.activePreset : base.activePreset,
         sidebarMore: { ...(isPlainObject(base.sidebarMore) ? base.sidebarMore : {}), ...(isPlainObject(patch.sidebarMore) ? patch.sidebarMore : {}) },
+        chatScroll: { ...(isPlainObject(base.chatScroll) ? base.chatScroll : {}), ...(isPlainObject(patch.chatScroll) ? patch.chatScroll : {}) },
       });
     }
 
@@ -1054,6 +1123,11 @@ window.__ModuleLoader__.load({
       'settings.sidebarMore.unfold': '放到外面',
       'settings.sidebarMore.foldAllAction': '全部收进更多',
       'settings.sidebarMore.unfoldAllAction': '全部放回外面',
+      'settings.chatScroll.title': '对话区滚动',
+      'settings.chatScroll.hint': '给聊天区滚轮加一点惯性；侧栏和弹层不受影响。滚到顶或到底时照旧交给页面，原生回弹还在。',
+      'settings.chatScroll.damping': '滚轮阻尼',
+      'settings.chatScroll.strength': '阻尼强度',
+      'settings.chatScroll.strengthHint': '1 最接近原生，5 滑得最远。改完立即生效。',
     };
 
     const EN = {
@@ -1115,6 +1189,11 @@ window.__ModuleLoader__.load({
       'settings.sidebarMore.unfold': 'Show outside',
       'settings.sidebarMore.foldAllAction': 'Fold all into More',
       'settings.sidebarMore.unfoldAllAction': 'Put all back outside',
+      'settings.chatScroll.title': 'Chat scrolling',
+      'settings.chatScroll.hint': 'Adds momentum to the wheel in the chat pane only — the sidebar and popouts are untouched. Top and bottom still belong to the page, so native overscroll stays.',
+      'settings.chatScroll.damping': 'Wheel damping',
+      'settings.chatScroll.strength': 'Strength',
+      'settings.chatScroll.strengthHint': '1 is closest to native, 5 glides furthest. Applies immediately.',
     };
 
     const DICTS = { zh: ZH, en: EN };
@@ -1636,6 +1715,56 @@ window.__ModuleLoader__.load({
         ]),
       ]);
 
+      const dampingOn = state.chatScroll?.damping !== false;
+      const strength = clamp(Math.round(Number(state.chatScroll?.strength) || CHAT_SCROLL_DEFAULT_STRENGTH), 1, CHAT_SCROLL_K.length);
+      const setStrength = (value) =>
+        commit({ ...state, chatScroll: { ...(isPlainObject(state.chatScroll) ? state.chatScroll : {}), strength: clamp(value, 1, CHAT_SCROLL_K.length) } });
+      const chatScrollBlock = node('div', { key: 'chatScroll', className: 'uic-sidebarMore', 'data-uic-chat-scroll': '1' }, [
+        node('h3', { key: 'h', className: 'uic-h3' }, t('settings.chatScroll.title')),
+        node('p', { key: 'hint', className: 'uic-dim' }, t('settings.chatScroll.hint')),
+        node('label', { key: 'damping', className: 'uic-sidebarMoreRow' }, [
+          node('input', {
+            key: 'box',
+            type: 'checkbox',
+            'data-uic-chat-scroll-damping': dampingOn ? 'true' : 'false',
+            checked: dampingOn,
+            onChange: (event) => commit({ ...state, chatScroll: { ...(isPlainObject(state.chatScroll) ? state.chatScroll : {}), damping: event.target.checked === true } }),
+          }),
+          node('span', { key: 'text' }, t('settings.chatScroll.damping')),
+        ]),
+        node('div', { key: 'strength', className: 'uic-sidebarMoreRow' }, [
+          node('span', { key: 'label' }, t('settings.chatScroll.strength')),
+          node('span', { key: 'ctl', className: 'uic-ctl' }, [
+            node(
+              'button',
+              {
+                key: 'minus',
+                type: 'button',
+                className: 'uic-btn',
+                'data-uic-chat-scroll-slower': '1',
+                disabled: dampingOn === false || strength <= 1,
+                onClick: () => setStrength(strength - 1),
+              },
+              '-',
+            ),
+            node('span', { key: 'value', className: 'uic-num', 'data-uic-chat-scroll-strength': String(strength) }, String(strength)),
+            node(
+              'button',
+              {
+                key: 'plus',
+                type: 'button',
+                className: 'uic-btn',
+                'data-uic-chat-scroll-faster': '1',
+                disabled: dampingOn === false || strength >= CHAT_SCROLL_K.length,
+                onClick: () => setStrength(strength + 1),
+              },
+              '+',
+            ),
+          ]),
+        ]),
+        node('p', { key: 'strengthHint', className: 'uic-dim' }, t('settings.chatScroll.strengthHint')),
+      ]);
+
       return node('div', { className: 'uic-page', 'data-uic-page': '1' }, [
         node('h2', { key: 'title', className: 'uic-title' }, t('settings.title')),
         node('p', { key: 'lead', className: 'uic-lead' }, t('settings.lead')),
@@ -1720,6 +1849,7 @@ window.__ModuleLoader__.load({
         node('p', { key: 'order-hint', className: 'uic-dim' }, t('settings.orderHint')),
         node('p', { key: 'order-hint-2', className: 'uic-dim' }, t('settings.orderHint2')),
         sidebarMoreBlock,
+        chatScrollBlock,
         node('button', { key: 'reset', className: 'uic-btn uic-btn-quiet', type: 'button', 'data-uic-reset': '1', onClick: onReset }, armed ? t('settings.resetOnce') : t('settings.reset')),
       ]);
     }
@@ -2275,6 +2405,215 @@ window.__ModuleLoader__.load({
       if (title.textContent !== base) title.textContent = base;
     }
 
+    /**
+     * Wheel damping for the chat scroller.
+     *
+     * Three rules decide every branch in here:
+     *  1. the host always wins — a `scroll` that lands more than 2px away from the
+     *     value we last wrote means somebody else moved the box (autofollow while
+     *     streaming, jump-to-bottom), so we drop the easing and re-sync instead of
+     *     fighting it. Two writers on one scrollTop is exactly the jitter this is
+     *     supposed to avoid;
+     *  2. the page is never trapped — a wheel the box cannot honour (up at the top,
+     *     down at the bottom) is left to the browser, `defaultPrevented` stays false;
+     *  3. a nested scroller keeps its own wheel — terminals, overflowing code blocks
+     *     and inner lists scroll themselves and are not ours to slow down.
+     *
+     * `sync(settings)` is idempotent: the 2s pass and every settings write call it.
+     */
+    function createChatDamping(options) {
+      const doc = options.doc ?? null;
+      const view = options.view ?? (doc === null ? null : doc.defaultView ?? null);
+      const getSettings = options.getSettings;
+      const log = typeof options.log === 'function' ? options.log : () => {};
+
+      let host = null;
+      let frame = 0;
+      let expected = null;
+      let target = 0;
+      let listening = false;
+      const stats = { frames: 0, wheels: 0, cancels: 0, lastCancel: '' };
+
+      const nowMs = () => Date.now();
+
+      const requestFrame = (callback) => {
+        if (view !== null && typeof view.requestAnimationFrame === 'function') return view.requestAnimationFrame(callback);
+        return setTimeout(callback, 16);
+      };
+
+      const cancelFrame = (id) => {
+        if (view !== null && typeof view.cancelAnimationFrame === 'function') view.cancelAnimationFrame(id);
+        else clearTimeout(id);
+      };
+
+      const maxScrollTop = () => {
+        if (host === null) return 0;
+        const height = Number(host.scrollHeight) || 0;
+        const seen = Number(host.clientHeight) || 0;
+        return Math.max(0, height - seen);
+      };
+
+      const reducedMotion = () => {
+        if (view === null || typeof view.matchMedia !== 'function') return false;
+        try {
+          return view.matchMedia('(prefers-reduced-motion: reduce)').matches === true;
+        } catch {
+          return false;
+        }
+      };
+
+      const write = (value) => {
+        if (host === null) return;
+        expected = value;
+        host.scrollTop = value;
+      };
+
+      /** Stop driving. `reason` only lands in the stats so the console can say why. */
+      const stop = (reason) => {
+        const wasDriving = expected !== null;
+        if (frame !== 0) {
+          cancelFrame(frame);
+          frame = 0;
+        }
+        expected = null;
+        target = host === null ? 0 : Number(host.scrollTop) || 0;
+        if (wasDriving === true) {
+          stats.cancels += 1;
+          stats.lastCancel = reason + ' @' + nowMs();
+        }
+      };
+
+      const step = () => {
+        frame = 0;
+        if (host === null) return;
+        const settings = getSettings();
+        const k = strengthToK(settings?.chatScroll?.strength);
+        const result = dampNext(Number(host.scrollTop) || 0, target, k);
+        write(result.next);
+        stats.frames += 1;
+        if (result.done === true) {
+          expected = null;
+          return;
+        }
+        frame = requestFrame(step);
+      };
+
+      const start = () => {
+        if (frame !== 0) return;
+        frame = requestFrame(step);
+      };
+
+      /** True when `node` sits inside a scroller of its own, between `event.target` and us. */
+      const scrollsItself = (node) => {
+        if (node === null || node === undefined || typeof node !== 'object') return false;
+        if (typeof node.scrollHeight !== 'number' || typeof node.clientHeight !== 'number') return false;
+        if (node.scrollHeight - node.clientHeight < 1) return false;
+        const style = view !== null && typeof view.getComputedStyle === 'function' ? view.getComputedStyle(node) : null;
+        const overflow = style === null ? '' : String(style.overflowY ?? '');
+        return overflow === 'auto' || overflow === 'scroll' || overflow === 'overlay';
+      };
+
+      const nestedScroller = (from, root) => {
+        let node = from;
+        for (let depth = 0; node !== null && node !== undefined && node !== root && depth < 64; depth += 1) {
+          if (scrollsItself(node) === true) return true;
+          node = node.parentElement ?? null;
+        }
+        return false;
+      };
+
+      const onWheel = (event) => {
+        if (host === null || event === null || event === undefined) return;
+        /* Ctrl+wheel is zoom, not scroll. */
+        if (event.ctrlKey === true) return;
+        if (nestedScroller(event.target ?? null, host) === true) return;
+        const delta = normalizeWheelDelta(event.deltaY, event.deltaMode, host.clientHeight);
+        if (delta === 0) return;
+        const from = frame !== 0 ? target : Number(host.scrollTop) || 0;
+        const next = clampScrollTop(from + delta, maxScrollTop());
+        /* Nothing to give in that direction: leave the page front and centre. */
+        if (Math.abs(next - from) < 0.5) return;
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        stats.wheels += 1;
+        target = next;
+        if (frame === 0) {
+          expected = Number(host.scrollTop) || 0;
+          start();
+        }
+      };
+
+      const onScroll = () => {
+        if (host === null || expected === null) return;
+        const actual = Number(host.scrollTop) || 0;
+        if (Math.abs(actual - expected) <= CHAT_SCROLL_HOST_DRIFT_PX) return;
+        stop('host moved scrollTop by ' + (actual - expected).toFixed(1));
+      };
+
+      const onKeyDown = (event) => {
+        const key = event === null || event === undefined ? '' : String(event.key ?? '');
+        if (CHAT_SCROLL_CANCEL_KEYS.has(key) === false) return;
+        stop('key ' + key);
+      };
+
+      const onPointerDown = () => stop('pointerdown');
+      const onTouchStart = () => stop('touchstart');
+      const onBlur = () => stop('blur');
+
+      const attach = () => {
+        if (host === null || listening === true) return;
+        host.addEventListener('wheel', onWheel, { passive: false });
+        host.addEventListener('scroll', onScroll, { passive: true });
+        if (doc !== null && typeof doc.addEventListener === 'function') {
+          doc.addEventListener('keydown', onKeyDown, true);
+          doc.addEventListener('pointerdown', onPointerDown, true);
+          doc.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+        }
+        if (view !== null && typeof view.addEventListener === 'function') view.addEventListener('blur', onBlur);
+        listening = true;
+      };
+
+      const detach = () => {
+        stop('detach');
+        if (host !== null) {
+          host.removeEventListener('wheel', onWheel, { passive: false });
+          host.removeEventListener('scroll', onScroll, { passive: true });
+        }
+        if (doc !== null && typeof doc.removeEventListener === 'function') {
+          doc.removeEventListener('keydown', onKeyDown, true);
+          doc.removeEventListener('pointerdown', onPointerDown, true);
+          doc.removeEventListener('touchstart', onTouchStart, true);
+        }
+        if (view !== null && typeof view.removeEventListener === 'function') view.removeEventListener('blur', onBlur);
+        listening = false;
+      };
+
+      /** Mount, move or unmount the damper for the current settings — safe to call often. */
+      const sync = (settings) => {
+        const current = settings ?? (typeof getSettings === 'function' ? getSettings() : null);
+        const wanted = current?.chatScroll?.damping !== false && reducedMotion() === false;
+        const found = wanted === false || doc === null || typeof doc.querySelector !== 'function'
+          ? null
+          : doc.querySelector(CHAT_SCROLL_SELECTOR);
+        if (found === host && (wanted === false || listening === true)) return host;
+        detach();
+        host = found;
+        if (wanted === false) {
+          log('chat scroll damping:', reducedMotion() === true ? 'reduced motion' : 'off');
+          return null;
+        }
+        if (host === null) return null;
+        target = Number(host.scrollTop) || 0;
+        attach();
+        return host;
+      };
+
+      return {
+        sync,
+        stop,
+        stats: () => ({ ...stats, listening, damping: host !== null, frame }),
+      };
+    }
+
     function apply(ctx) {
       const doc = typeof document === 'undefined' ? null : document;
       const slots = ctx.get('slots');
@@ -2386,8 +2725,7 @@ window.__ModuleLoader__.load({
 
       injectStyle(doc);
       ctx.effect(() => () => {
-        if (moreObserver !== null && typeof moreObserver.disconnect === 'function') moreObserver.disconnect();
-        for (const [row, original] of moreTouched) {
+        if (moreObserver !== null && typeof moreObserver.disconnect === 'function') moreObserver.disconnect();        for (const [row, original] of moreTouched) {
           if (row.style !== undefined) row.style.display = original;
         }
         moreTouched.clear();
@@ -2395,6 +2733,7 @@ window.__ModuleLoader__.load({
         sidebarPanels = [];
         sidebarReplayQueued = false;
         stopPicking();
+        chatDamping.stop('teardown');
         removeStyle(doc);
         if (doc !== null) {
           for (const element of Array.from(doc.querySelectorAll('[' + HIDDEN_ATTR + ']'))) element.removeAttribute(HIDDEN_ATTR);
@@ -2404,12 +2743,22 @@ window.__ModuleLoader__.load({
       /** Elements we wrote `style.order` to; cleared before every pass and on teardown. */
       const ordered = [];
 
+      /* One damper for the whole session. It finds the chat scroller itself, so a
+         container the host re-creates is picked up by the same 2s pass. */
+      const chatDamping = createChatDamping({
+        doc,
+        view: doc === null ? null : (doc.defaultView ?? null),
+        getSettings: () => readSettings(),
+        log: (...args) => console.debug('[ui-controller]', ...args),
+      });
+
       const applyAll = () => {
         const current = readSettings();
         applyHidden();
         applyVisualOrder(doc, current, ordered);
         applyFold();
         normalizeTitle();
+        chatDamping.sync(current);
       };  applyAll();
       const timer = setInterval(applyAll, 2000);
       ctx.effect(() => () => clearInterval(timer), 'ui-controller: reapply timer');
@@ -2465,6 +2814,7 @@ window.__ModuleLoader__.load({
         inventory: () => inventory(),
         catalog: () => SLOT_CATALOG.map((slot) => ({ ...slot })),
         catalogSummary: () => ({ total: SLOT_CATALOG.length, kinds: kindCounts() }),
+        chatScroll: () => chatDamping.stats(),
         apply: applyAll,
       };
 
@@ -2545,6 +2895,14 @@ window.__ModuleLoader__.load({
       sampleMoreItem,
       SidebarMoreMenu,
       DICTS,
+      CHAT_SCROLL_SELECTOR,
+      CHAT_SCROLL_K,
+      normalizeWheelDelta,
+      dampNext,
+      clampScrollTop,
+      strengthToK,
+      sanitizeChatScroll,
+      createChatDamping,
     };
   },
 });

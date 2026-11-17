@@ -626,6 +626,7 @@ test('restoring defaults drops every mark, binding and preset', () => {
     presets: {},
     activePreset: null,
     sidebarMore: { foldAll: true },
+    chatScroll: { damping: true, strength: 3 },
   });
   assert.equal(api.SETTINGS_KEY, 'dsh.uiController.settings.v1');
 });
@@ -1451,6 +1452,184 @@ test('a host without a settings page gets no page instead of a crash', () => {
   assert.ok(injected.includes('settings.section'), 'the slot was asked for');
   assert.equal(ctx.registered.length, 0, 'nothing is registered into a slot that does not exist');
   for (const dispose of ctx.disposes) dispose();
+});
+
+
+/* ------------------------------------------------- chat scrolling (0.2.6) */
+
+function fakeScroller(options = {}) {
+  const listeners = [];
+  const node = {
+    scrollTop: options.scrollTop ?? 0,
+    scrollHeight: options.scrollHeight ?? 2000,
+    clientHeight: options.clientHeight ?? 500,
+    parentElement: null,
+    addEventListener(type, handler, opts) {
+      listeners.push({ type, handler, opts });
+    },
+    removeEventListener(type, handler) {
+      const index = listeners.findIndex((item) => item.type === type && item.handler === handler);
+      if (index >= 0) listeners.splice(index, 1);
+    },
+  };
+  return { node, listeners };
+}
+
+function fakeChatDamping(scroller, options = {}) {
+  const view = {
+    matchMedia: (query) => ({ media: query, matches: options.reduced === true }),
+    addEventListener() {},
+    removeEventListener() {},
+    getComputedStyle: (node) => ({ overflowY: node?.__overflowY ?? 'visible' }),
+    requestAnimationFrame() {
+      return 1;
+    },
+    cancelAnimationFrame() {},
+  };
+  const doc = {
+    defaultView: view,
+    querySelector: (selector) => (selector === api.CHAT_SCROLL_SELECTOR ? scroller.node : null),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  return api.createChatDamping({
+    doc,
+    view,
+    getSettings: () => ({ chatScroll: options.settings ?? { damping: true, strength: 3 } }),
+    log: () => {},
+  });
+}
+
+test('chat scroll: a wheel tick normalises all three delta modes', () => {
+  assert.equal(api.normalizeWheelDelta(-120, 0, 729), -120, 'pixels stay pixels');
+  assert.equal(api.normalizeWheelDelta(-3, 1, 729), -48, 'lines use the 16px row constant');
+  assert.equal(api.CHAT_SCROLL_LINE_PX ?? 16, 16);
+  assert.equal(api.normalizeWheelDelta(1, 2, 700), 630, 'pages are 90% of the viewport');
+  assert.equal(api.normalizeWheelDelta(0, 0, 700), 0, 'a zero tick stays zero');
+  assert.equal(api.normalizeWheelDelta(Number.NaN, 0, 700), 0, 'garbage does not become NaN');
+});
+
+test('chat scroll: the easing is monotone and lands exactly on target', () => {
+  let cur = 0;
+  let steps = 0;
+  let previous = 0;
+  let landed = null;
+  while (steps < 200) {
+    const result = api.dampNext(cur, 300, api.strengthToK(3));
+    assert.ok(result.next >= previous - 1e-9, 'never goes backwards');
+    previous = result.next;
+    cur = result.next;
+    steps += 1;
+    if (result.done === true) {
+      landed = result.next;
+      break;
+    }
+  }
+  assert.equal(landed, 300, 'the last step writes the exact target, not a near miss');
+  assert.ok(steps >= 6, 'more than a handful of frames — this is real easing, got ' + steps);
+  /* A stronger setting must settle sooner than the weakest one: that is the whole
+     point of the stepper, and a swapped table would fail right here. */
+  const framesFor = (strength) => {
+    let value = 0;
+    let count = 0;
+    for (; count < 500; count += 1) {
+      const result = api.dampNext(value, 300, api.strengthToK(strength));
+      value = result.next;
+      if (result.done === true) break;
+    }
+    return count;
+  };
+  assert.ok(framesFor(5) < framesFor(1), 'strength 5 settles faster than strength 1');
+  assert.deepEqual(api.CHAT_SCROLL_K, [0.1, 0.14, 0.18, 0.24, 0.32], 'the strength table is the shipped one');
+});
+
+test('chat scroll: scrollTop is clamped at both ends', () => {
+  assert.equal(api.clampScrollTop(-40, 1200), 0, 'cannot go above the first row');
+  assert.equal(api.clampScrollTop(5000, 1200), 1200, 'cannot go past the last row');
+  assert.equal(api.clampScrollTop(600, 1200), 600, 'the middle is untouched');
+  assert.equal(api.clampScrollTop(600, -10), 0, 'a box shorter than its content scrolls nowhere');
+  assert.equal(api.clampScrollTop(Number.NaN, 1200), 0, 'garbage lands at the top');
+});
+
+test('chat scroll: no listener when it is off or reduced motion is on', () => {
+  const off = fakeScroller();
+  const offDamper = fakeChatDamping(off, { settings: { damping: false, strength: 3 } });
+  assert.equal(offDamper.sync(), null, 'a switched-off damper mounts nothing');
+  assert.equal(off.listeners.length, 0, 'and therefore registers no wheel listener');
+
+  const calm = fakeScroller();
+  const calmDamper = fakeChatDamping(calm, { reduced: true });
+  assert.equal(calmDamper.sync(), null, 'prefers-reduced-motion gets native scrolling');
+  assert.equal(calm.listeners.length, 0, 'no wheel listener under reduced motion');
+
+  const live = fakeScroller();
+  const damper = fakeChatDamping(live);
+  assert.ok(damper.sync() !== null, 'with damping on it mounts');
+  const wheel = live.listeners.filter((item) => item.type === 'wheel');
+  assert.equal(wheel.length, 1, 'exactly one wheel listener');
+  assert.equal(wheel[0].opts?.passive, false, 'registered passive:false, or preventDefault is a no-op');
+  const before = live.listeners.length;
+  damper.sync();
+  assert.equal(live.listeners.length, before, 'sync is idempotent — no listener pile-up');
+
+  /* The toggle is read on every sync, so flipping it back off unmounts. */
+  const settings = { chatScroll: { damping: true, strength: 3 } };
+  const toggled = fakeChatDamping(fakeScroller(), { settings: settings.chatScroll });
+  const own = fakeScroller();
+  const ownDoc = {
+    defaultView: { matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {}, requestAnimationFrame: () => 1, cancelAnimationFrame() {} },
+    querySelector: () => own.node,
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const ownDamper = api.createChatDamping({ doc: ownDoc, view: ownDoc.defaultView, getSettings: () => settings, log: () => {} });
+  ownDamper.sync();
+  assert.equal(own.listeners.length, 2, 'wheel + scroll while it is on');
+  settings.chatScroll = { damping: false, strength: 3 };
+  ownDamper.sync();
+  assert.equal(own.listeners.length, 0, 'turning the switch off detaches both listeners again');
+  assert.ok(toggled, 'the helper itself is usable');
+});
+
+test('chat scroll: the wheel is only swallowed when the box can move', () => {
+  const scroller = fakeScroller({ scrollTop: 0, scrollHeight: 2000, clientHeight: 500 });
+  const damper = fakeChatDamping(scroller);
+  damper.sync();
+  const wheel = scroller.listeners.find((item) => item.type === 'wheel').handler;
+
+  const event = (deltaY, node = scroller.node) => {
+    const state = { prevented: false, target: node, deltaY, deltaMode: 0, ctrlKey: false };
+    state.preventDefault = () => {
+      state.prevented = true;
+    };
+    return state;
+  };
+
+  const atTop = event(-120);
+  wheel(atTop);
+  assert.equal(atTop.prevented, false, 'up at the very top belongs to the page, not to us');
+
+  scroller.node.scrollTop = 100;
+  const midway = event(120);
+  wheel(midway);
+  assert.equal(midway.prevented, true, 'mid-conversation we do take the wheel');
+  /* The stub rAF never fires, so drop the pending frame between ticks: this test
+     is about which wheels we swallow, not about the easing loop. */
+  damper.stop('test');
+
+  scroller.node.scrollTop = 1500;
+  const atBottom = event(120);
+  wheel(atBottom);
+  assert.equal(atBottom.prevented, false, 'down at the bottom also stays native');
+  damper.stop('test');
+
+  /* A nested scroller keeps its own wheel: a terminal or an overflowing code
+     block must not be slowed down by us. */
+  scroller.node.scrollTop = 400;
+  const inner = { scrollTop: 10, scrollHeight: 900, clientHeight: 200, parentElement: scroller.node, __overflowY: 'auto' };
+  const nested = event(120, inner);
+  wheel(nested);
+  assert.equal(nested.prevented, false, 'the inner scroller is left alone');
 });
 
 

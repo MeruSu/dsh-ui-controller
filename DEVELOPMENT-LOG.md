@@ -3,6 +3,15 @@
 > 规则：只记用户纠正过我什么、我改了什么、怎么改的，以及**已经定稿、不许再动**的部分。
 > 目的只有一个：同一件事不要被优化第二遍。
 
+## 2026-11-17 06:5x · 聊天页滚轮阻尼（0.2.6）
+
+**用户原话**（m21832）：「uic里加个功能，给聊天页的滑动加个阻尼」
+**事实**：聊天滚动容器是 `div[data-conversation-scroll]`（宿主 5.3.5 实测，`overflow-y:auto`、`overscroll-behavior-y:auto`、`scroll-behavior:auto`，scrollHeight 2503 / clientHeight 729）；旁边的 class 是哈希，不能当选择器。侧栏 `div.GAkraW_list` 和 `div.SNx2jG_scroller` 是另外两个滚动器，本轮不碰。
+**已做**：`createChatDamping()` 在 `[data-conversation-scroll]` 上挂 `wheel {passive:false}`；`normalizeWheelDelta()`（0=px / 1=行×16 / 2=页×clientHeight×0.9）→ `clampScrollTop()` → `dampNext()` 的指数缓动（k 由 `strengthToK()` 从 `[0.10,0.14,0.18,0.24,0.32]` 取），`|target-cur|<1px` 时精确落点。设置项 `chatScroll.damping`（默认 true）+ 强度 1–5（默认 3），设置页新组「对话区滚动 / Chat scrolling」。三条硬规则：①任何与上次写入偏差 >2px 的 `scroll` 事件视为宿主接管，立刻取消缓动并重同步；②顶/底方向滚不动时不 `preventDefault`，原生回弹还在；③`event.target` 落在会自己滚的元素（`.xterm`、溢出代码块、内层列表）里就完全放过。键盘（PageUp/PageDown/Home/End/方向键/空格）、pointerdown、touchstart、window blur 都取消；`prefers-reduced-motion: reduce` 不挂监听。
+**不许再动**：不要用哈希 class 选聊天滚动器；不要加全局 `scroll-behavior:smooth`；不要把缓动时长写成固定 timeout（必须是 rAF 指数步进，才可随时取消）。
+
+**已发布的语义（Lead 2026-11-17 验收结论追加）**：强度档位表 `k = [0.10, 0.14, 0.18, 0.24, 0.32]` 自 0.2.6 发布起即为**冻结语义**——用户已经按这套手感调过档。以后想改手感只能①加新档位 ②加新字段（如 `chatScroll.k`），**绝不允许原地改这五个系数**，也不允许偷偷改「强度 N 代表哪个 k」。前车之鉴：better-notice 私自改「播放频率」的语义，被用户当场抓住。
+
 ## 2026-11-15 · 设置页左栏三态：整块删除，不再恢复
 
 **用户的纠正**（m18515）：「这一栏完全是错的…我的需求是主页面的设置页有一栏抽屉可以把很多的设置收起来，参考 codexui 那个…现在的实现方式和我们一开始说的完全不一样」

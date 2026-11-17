@@ -87,6 +87,22 @@ is missing, this is the plugin that answers that.
    teardown; a row we cannot identify is left alone. Nothing else is touched: no
    custom panel rows, no icon replacement, and the settings dialog's own nav
    width is left alone.
+7. **Chat scrolling: wheel damping.** A wheel over the chat pane is eased instead of
+   jumping: each tick is normalised (`deltaMode` 0 px / 1 ×16 px per line / 2 ×90% of
+   the viewport), added to a target `scrollTop`, and stepped toward it in
+   `requestAnimationFrame` with an exponential factor. Strength 1–5 maps to
+   `k = [0.10, 0.14, 0.18, 0.24, 0.32]` (default 3), and `chatScroll.damping`
+   (default on) switches it off entirely; both apply live. The container is the
+   host's `[data-conversation-scroll]` — the class beside it is hashed and is never
+   used. Three rules keep it from fighting the page: **the host always wins** (a
+   `scroll` that lands more than 2px from the value we last wrote cancels the easing
+   and re-syncs — autofollow while streaming keeps working), **the page is never
+   trapped** (up at the top or down at the bottom leaves the event alone, so native
+   overscroll stays), and **nested scrollers keep their own wheel** (a terminal, an
+   overflowing code block or an inner list is not ours to slow down). Keys
+   (PageUp/PageDown/Home/End/arrows/space), pointerdown, touchstart and window blur
+   all cancel immediately; `prefers-reduced-motion: reduce` installs no listener at
+   all.
 
 ## What it deliberately does **not** do
 
