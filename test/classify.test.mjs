@@ -900,18 +900,20 @@ test('the static fallback still renders slot rows', () => {
   const pkg = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
 
   test('package.json declares the display metadata the host reads', () => {
-    assert.equal(pkg.icon, './icon.svg', 'manifest icon')
+    assert.equal(pkg.icon, './icon.png', 'manifest icon')
     assert.ok(pkg.exports, 'exports present')
-    assert.equal(pkg.exports['./icon'], './icon.svg', 'exported icon')
+    assert.equal(pkg.exports['./icon'], './icon.png', 'exported icon')
     assert.ok(pkg.exports['./locale/*.json'], 'exported locale glob')
   })
 
   test('the icon ships inside the npm package', () => {
-    assert.ok(pkg.files.includes('icon.svg'), 'files includes icon.svg')
+    assert.ok(pkg.files.includes('icon.png'), 'files includes icon.png')
     assert.ok(pkg.files.includes('locale'), 'files includes locale/')
-    const svg = readFileSync(join(here, '..', 'icon.svg'), 'utf8')
-    assert.ok(svg.startsWith('<svg'), 'icon.svg is an SVG')
-    assert.ok(Buffer.byteLength(svg) <= 256 * 1024, 'icon stays under the hosts 256 KiB cap')
+    const png = readFileSync(join(here, '..', 'icon.png'))
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'icon.png is a PNG')
+    assert.equal(png.readUInt32BE(16), 100, 'icon width is 100')
+    assert.equal(png.readUInt32BE(20), 100, 'icon height is 100')
+    assert.ok(png.length <= 256 * 1024, 'icon stays under the hosts 256 KiB cap')
   })
 
   test('locale files carry a title and a description in both languages', () => {

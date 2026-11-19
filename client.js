@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-ui-controller',
   factory(require) {
 
-    const VERSION = '0.2.6';
+    const VERSION = '0.2.7';
 
     const NS = 'uiController';
     const SECTION_ID = 'ui-controller';

@@ -2,6 +2,10 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.7 — 2026-11-19
+
+**Icon only: the plugin icon is now a PNG (meru family).**
+
 ## 0.2.6 — 2026-11-17
 ### Added
 - **Chat scroll damping** (user m21832: 「uic里加个功能，给聊天页的滑动加个阻尼」).
