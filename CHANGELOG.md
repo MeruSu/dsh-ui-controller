@@ -2,6 +2,10 @@
 
 Notable changes to `dsh-ui-controller`.
 
+## 0.2.8 — 2026-11-20
+
+**移除侧栏面板折叠（更多菜单）**：宿主已自带该能力（`panels.more` / `toggle.collapse`），我们不再重复实现；被删的旧节保留在下方。
+
 ## 0.2.7 — 2026-11-19
 
 **Icon only: the plugin icon is now a PNG (meru family).**

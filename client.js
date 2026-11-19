@@ -30,7 +30,7 @@ window.__ModuleLoader__.load({
   id: 'dsh-ui-controller',
   factory(require) {
 
-    const VERSION = '0.2.7';
+    const VERSION = '0.2.8';
 
     const NS = 'uiController';
     const SECTION_ID = 'ui-controller';
@@ -103,15 +103,8 @@ window.__ModuleLoader__.load({
       '.uic-filterGroup{display:inline-flex;gap:2px}',
       '.uic-filter{height:26px;padding:0 8px;border-radius:6px;font-size:11px;cursor:pointer;border:1px solid var(--dsw-alias-border-l4);background:transparent;color:var(--dsw-alias-label-secondary)}',
       '.uic-filter[data-on="true"]{border-color:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary)}',
-      '.uic-sidebarMore{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
-      '.uic-sidebarMoreRow{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}',
-      '.uic-moreRow{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;padding:0 8px;font-size:13px;line-height:20px}',
-      '.uic-moreRowName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-      '.uic-moreRowMain{display:flex;align-items:center;gap:8px;min-width:0;flex:1 1 auto}',
-      '.uic-moreGlyph{display:inline-flex;align-items:center;justify-content:center;flex:none;width:16px;height:16px;overflow:hidden}',
-      '.uic-moreGlyph>svg,.uic-moreGlyph>img{width:16px;height:16px;display:block}',
-      '.uic-moreAction{flex:none;padding:2px 8px;font-size:12px;border:1px solid var(--dsw-alias-border-l4);border-radius:6px;cursor:pointer}',
-      '.uic-moreAction:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.uic-settingsGroup{display:flex;flex-direction:column;gap:6px;margin-top:12px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l2)}',
+      '.uic-settingsRow{display:flex;align-items:center;gap:8px;font-size:13px;line-height:20px}',
       '.uic-zone{border-top:.5px solid var(--dsw-alias-border-l2);padding:2px 0}',
       '.uic-zoneHead{display:flex;align-items:center;gap:6px;width:100%;height:32px;padding:0 2px;border:0;background:transparent;color:var(--dsw-alias-label-primary);cursor:pointer;text-align:left;font-size:12px;font-weight:600}',
       '.uic-zoneName{flex:none}',
@@ -135,63 +128,6 @@ window.__ModuleLoader__.load({
       '.uic-entryActions{display:flex;align-items:center;gap:4px;justify-self:end}',
       '@container (max-width:620px){.uic-slotHead{grid-template-columns:14px 12px minmax(0,1fr) 46px minmax(0,1fr);height:auto;min-height:44px}.uic-slotHead .uic-kind{display:none}.uic-entry{grid-template-columns:minmax(0,1fr) auto auto;min-height:44px}.uic-entry .uic-entryLive,.uic-entry .uic-num{display:none}}',
     ].join('\n');
-
-    /* ------------------------------------------------- settings page left rail */
-
-
-    const SIDEBAR_MORE_KEY = 'dsh.uic.sidebarMore.v1';
-    const SIDEBAR_MORE_SLOT = 'sidebar.panellist.actions';
-    const SIDEBAR_MORE_ID = 'ui-controller.sidebar-more';
-    const SIDEBAR_MORE_ORDER = 0;
-    const SIDEBAR_MORE_MODAL = '[data-shortcut-modal="sidebar"]';
-    const MORE_TITLES = new Set(['更多', 'More']);
-
-    /**
-     * The folded record: which panel ids the More menu currently hides.
-     * The host keeps its pins in memory only (dsh-client-ui-sidebar
-     * createPanelPins), so a reload would put every panel back outside;
-     * this record is what a reload replays.
-     */
-    function readSidebarMore(storage) {
-      const store = storage ?? null;
-      if (store === null || typeof store.getItem !== 'function') return { folded: [] };
-      try {
-        const raw = store.getItem(SIDEBAR_MORE_KEY);
-        if (raw === null || raw === undefined || raw === '') return { folded: [] };
-        const parsed = JSON.parse(raw);
-        if (isPlainObject(parsed) === false || Array.isArray(parsed.folded) === false) return { folded: [] };
-        return { folded: parsed.folded.filter((id) => typeof id === 'string' && id !== '') };
-      } catch {
-        return { folded: [] };
-      }
-    }
-
-    function writeSidebarMore(storage, folded) {
-      const store = storage ?? null;
-      if (store === null || typeof store.setItem !== 'function') return;
-      try {
-        store.setItem(SIDEBAR_MORE_KEY, JSON.stringify({ folded }));
-      } catch {
-        /* a full quota must not take the page down */
-      }
-    }
-
-    /** Folded ids that still name a live panel; the rest are stale and dropped. */
-    function cleanFolded(folded, panels) {
-      const live = new Set(panels);
-      return folded.filter((id) => live.has(id));
-    }
-
-    /**
-     * What a fresh install looks like: with foldAll on, every panel except
-     * plugins goes behind the More button (the shape the user asked for).
-     * Off means nothing folds — but the stored record is never erased here, so
-     * turning the switch back on restores it (see the menu's replay).
-     */
-    function computeFold(panels, settings) {
-      if (settings?.sidebarMore?.foldAll === true) return panels.filter((id) => id !== 'plugins');
-      return [];
-    }
 
     const PRESET_NAME_MAX = 40;
     const SELECTOR_MAX = 240;
@@ -391,7 +327,6 @@ window.__ModuleLoader__.load({
         visualOrder: {},
         presets: {},
         activePreset: null,
-        sidebarMore: { foldAll: true },
         chatScroll: { damping: true, strength: CHAT_SCROLL_DEFAULT_STRENGTH },
       };
     }
@@ -490,7 +425,6 @@ window.__ModuleLoader__.load({
       next.visualOrder = sanitizeVisualOrder(raw.visualOrder ?? raw.order);
       next.presets = sanitizePresets(raw.presets);
       next.activePreset = typeof raw.activePreset === 'string' && hasOwn(next.presets, raw.activePreset) ? raw.activePreset : null;
-      next.sidebarMore = isPlainObject(raw.sidebarMore) ? { foldAll: raw.sidebarMore.foldAll !== false } : { foldAll: true };
       next.chatScroll = sanitizeChatScroll(raw.chatScroll);
       return next;
     }
@@ -579,7 +513,6 @@ window.__ModuleLoader__.load({
         visualOrder,
         presets: isPlainObject(patch.presets) ? patch.presets : base.presets,
         activePreset: hasOwn(patch, 'activePreset') ? patch.activePreset : base.activePreset,
-        sidebarMore: { ...(isPlainObject(base.sidebarMore) ? base.sidebarMore : {}), ...(isPlainObject(patch.sidebarMore) ? patch.sidebarMore : {}) },
         chatScroll: { ...(isPlainObject(base.chatScroll) ? base.chatScroll : {}), ...(isPlainObject(patch.chatScroll) ? patch.chatScroll : {}) },
       });
     }
@@ -1116,13 +1049,6 @@ window.__ModuleLoader__.load({
       'settings.filter.unbound': '未绑定',
       'settings.filterCount': '{slots} 槽 · {entries} entry',
       'settings.noMatch': '没有匹配的座位。',
-      'settings.sidebarMore.title': '左栏「更多」',
-      'settings.sidebarMore.hint': '新装即把除「插件」外的面板都收进左侧「更多 (N)」；关掉 = 全部放回外面（记录保留，下次开回来还原）。',
-      'settings.sidebarMore.foldAll': '新装即全部折叠',
-      'settings.sidebarMore.fold': '收进更多',
-      'settings.sidebarMore.unfold': '放到外面',
-      'settings.sidebarMore.foldAllAction': '全部收进更多',
-      'settings.sidebarMore.unfoldAllAction': '全部放回外面',
       'settings.chatScroll.title': '对话区滚动',
       'settings.chatScroll.hint': '给聊天区滚轮加一点惯性；侧栏和弹层不受影响。滚到顶或到底时照旧交给页面，原生回弹还在。',
       'settings.chatScroll.damping': '滚轮阻尼',
@@ -1182,13 +1108,6 @@ window.__ModuleLoader__.load({
       'settings.filter.unbound': 'Unbound',
       'settings.filterCount': '{slots} slots · {entries} entries',
       'settings.noMatch': 'No slot matches.',
-      'settings.sidebarMore.title': 'Sidebar More',
-      'settings.sidebarMore.hint': 'A fresh install folds every panel except Plugins behind the More (N) button; off puts everything back outside (the record is kept, so turning it on restores it).',
-      'settings.sidebarMore.foldAll': 'Fold everything on a fresh install',
-      'settings.sidebarMore.fold': 'Fold into More',
-      'settings.sidebarMore.unfold': 'Show outside',
-      'settings.sidebarMore.foldAllAction': 'Fold all into More',
-      'settings.sidebarMore.unfoldAllAction': 'Put all back outside',
       'settings.chatScroll.title': 'Chat scrolling',
       'settings.chatScroll.hint': 'Adds momentum to the wheel in the chat pane only — the sidebar and popouts are untouched. Top and bottom still belong to the page, so native overscroll stays.',
       'settings.chatScroll.damping': 'Wheel damping',
@@ -1699,30 +1618,15 @@ window.__ModuleLoader__.load({
 
       const presetNames = Object.keys(state.presets).sort();
 
-      const foldAllOn = state.sidebarMore?.foldAll !== false;
-      const sidebarMoreBlock = node('div', { key: 'sidebarMore', className: 'uic-sidebarMore', 'data-uic-sidebar-more': '1' }, [
-        node('h3', { key: 'h', className: 'uic-h3' }, t('settings.sidebarMore.title')),
-        node('p', { key: 'hint', className: 'uic-dim' }, t('settings.sidebarMore.hint')),
-        node('label', { key: 'fold', className: 'uic-sidebarMoreRow' }, [
-          node('input', {
-            key: 'box',
-            type: 'checkbox',
-            'data-uic-sidebar-more-foldall': foldAllOn ? 'true' : 'false',
-            checked: foldAllOn,
-            onChange: (event) => commit({ ...state, sidebarMore: { ...(isPlainObject(state.sidebarMore) ? state.sidebarMore : {}), foldAll: event.target.checked === true } }),
-          }),
-          node('span', { key: 'text' }, t('settings.sidebarMore.foldAll')),
-        ]),
-      ]);
 
       const dampingOn = state.chatScroll?.damping !== false;
       const strength = clamp(Math.round(Number(state.chatScroll?.strength) || CHAT_SCROLL_DEFAULT_STRENGTH), 1, CHAT_SCROLL_K.length);
       const setStrength = (value) =>
         commit({ ...state, chatScroll: { ...(isPlainObject(state.chatScroll) ? state.chatScroll : {}), strength: clamp(value, 1, CHAT_SCROLL_K.length) } });
-      const chatScrollBlock = node('div', { key: 'chatScroll', className: 'uic-sidebarMore', 'data-uic-chat-scroll': '1' }, [
+      const chatScrollBlock = node('div', { key: 'chatScroll', className: 'uic-settingsGroup', 'data-uic-chat-scroll': '1' }, [
         node('h3', { key: 'h', className: 'uic-h3' }, t('settings.chatScroll.title')),
         node('p', { key: 'hint', className: 'uic-dim' }, t('settings.chatScroll.hint')),
-        node('label', { key: 'damping', className: 'uic-sidebarMoreRow' }, [
+        node('label', { key: 'damping', className: 'uic-settingsRow' }, [
           node('input', {
             key: 'box',
             type: 'checkbox',
@@ -1732,7 +1636,7 @@ window.__ModuleLoader__.load({
           }),
           node('span', { key: 'text' }, t('settings.chatScroll.damping')),
         ]),
-        node('div', { key: 'strength', className: 'uic-sidebarMoreRow' }, [
+        node('div', { key: 'strength', className: 'uic-settingsRow' }, [
           node('span', { key: 'label' }, t('settings.chatScroll.strength')),
           node('span', { key: 'ctl', className: 'uic-ctl' }, [
             node(
@@ -1848,562 +1752,11 @@ window.__ModuleLoader__.load({
         )),
         node('p', { key: 'order-hint', className: 'uic-dim' }, t('settings.orderHint')),
         node('p', { key: 'order-hint-2', className: 'uic-dim' }, t('settings.orderHint2')),
-        sidebarMoreBlock,
         chatScrollBlock,
         node('button', { key: 'reset', className: 'uic-btn uic-btn-quiet', type: 'button', 'data-uic-reset': '1', onClick: onReset }, armed ? t('settings.resetOnce') : t('settings.reset')),
       ]);
     }
 
-
-    /* -------------------------------------------------- sidebar More menu */
-
-    /** Module state shared by the menu and the replay paths. */
-    let sidebarWrite = null;
-    let sidebarPanels = [];
-    let sidebarReplayQueued = false;
-
-    /** Elements this session hid and the launcher title it rewrote; both are restored on teardown. */
-    const moreTouched = new Map();
-    /* Cloned panel glyphs, remembered per panel id: the host stops rendering a
-       panel's row once it is pinned away, so the icon has to be kept from the last
-       time that row was on screen. */
-    const moreGlyphs = new Map();
-    /** Resolve a panel entry's label the way the host does (thunk first, then string, then id). */
-    function entryLabelOf(entry) {
-      const raw = entry?.options?.label ?? entry?.label;
-      if (typeof raw === 'function') {
-        try {
-          const value = raw();
-          if (typeof value === 'string' && value !== '') return value;
-        } catch {
-          /* a locale-bound thunk may throw before the host binds it; fall through */
-        }
-      }
-      if (typeof raw === 'string' && raw !== '') return raw;
-      return String(entry?.options?.id ?? entry?.id ?? '');
-    }
-
-    /** ids that should be behind the More button right now (foldAll wins, plugins never folds). */
-    function foldedIdsOf(panels, settings, storageRef) {
-      const ids = panels.map((panel) => panel.id);
-      return desiredFoldIds(
-        panels.map((panel) => ({ id: panel.id })),
-        settings,
-        storageRef,
-      ).filter((id) => id !== 'plugins');
-    }
-
-    /**
-     * The host sidebar row for one panel: matched by its own aria-label first, then
-     * by the rendered title. Returns null while the row is not on screen yet.
-     */
-    function panelRowOf(doc, label) {
-      if (doc === null || doc === undefined || typeof doc.querySelectorAll !== 'function') return null;
-      let rows = [];
-      try {
-        rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
-      } catch {
-        rows = [];
-      }
-      for (const row of rows) {
-        const aria = row.getAttribute?.('aria-label') ?? '';
-        if (aria !== '' && aria === label) return row;
-        if (typeof row.querySelector !== 'function') continue;
-        try {
-          const title = row.querySelector('span[class*="panelTitle"]');
-          if (title !== null && title !== undefined && (title.textContent ?? '') === label) return row;
-        } catch {
-          /* a row we cannot read is simply not a match */
-        }
-      }
-      return null;
-    }
-
-    /**
-     * The element that has to disappear when a panel folds. Usually that is the row
-     * button itself (the host draws the glyph inside it), but a panel whose icon is
-     * rendered beside the button would leave the icon behind, so the wrapper that
-     * holds both is hidden instead. `nav` is never a folding unit.
-     */
-    function foldUnitOf(row) {
-      if (row === null || row === undefined) return null;
-      let glyph = null;
-      try {
-        glyph = typeof row.querySelector === 'function' ? row.querySelector('span[class*="panelGlyph"]') : null;
-      } catch {
-        glyph = null;
-      }
-      if (glyph !== null && glyph !== undefined) return row;
-      const parent = row.parentElement ?? null;
-      if (parent === null) return row;
-      if (String(parent.tagName ?? '').toUpperCase() === 'NAV') return row;
-      let parentGlyph = null;
-      try {
-        parentGlyph = typeof parent.querySelector === 'function' ? parent.querySelector('span[class*="panelGlyph"]') : null;
-      } catch {
-        parentGlyph = null;
-      }
-      return parentGlyph !== null && parentGlyph !== undefined ? parent : row;
-    }
-
-    /**
-     * The node that actually draws the icon inside a host glyph span. The host puts
-     * its slot anchor (`div[data-slot]` with `display: contents`) in between, so
-     * the first child is a 0x0 wrapper; cloning that would duplicate a slot marker.
-     * Returns the first svg / img / canvas inside it, or the first child itself when
-     * the icon is drawn some other way.
-     */
-    function glyphIconNodeOf(glyph) {
-      if (glyph === null || glyph === undefined) return null;
-      const start = glyph.firstElementChild ?? null;
-      if (start === null) return null;
-      if (typeof start.querySelector === 'function') {
-        try {
-          const drawing = start.querySelector('svg, img, canvas');
-          if (drawing !== null && drawing !== undefined) return drawing;
-        } catch {
-          return start;
-        }
-      }
-      return start;
-    }
-
-    /**
-     * Deep-clone the glyph inside one live host row and strip ids (a second copy
-     * would collide in the document). Returns null when the row draws no glyph.
-     */
-    function glyphCloneOf(row) {
-      if (row === null || row === undefined) return null;
-      let glyph = null;
-      try {
-        glyph = typeof row.querySelector === 'function' ? row.querySelector('span[class*="panelGlyph"]') : null;
-      } catch {
-        glyph = null;
-      }
-      if (glyph === null || glyph === undefined) return null;
-      const source = glyphIconNodeOf(glyph);
-      if (source === null || source === undefined) return null;
-      let clone = null;
-      try {
-        clone = typeof source.cloneNode === 'function' ? source.cloneNode(true) : null;
-      } catch {
-        clone = null;
-      }
-      if (clone === null) return null;
-      /* A cloned wrapper must never name a host slot twice. Ids are different: an
-         icon drawn by the host is usually an <svg> whose <use href="#name"> points
-         at a symbol, and stripping that symbol's id turns the icon into an empty
-         box - the broken glyphs seen in the More menu. Keep every id the drawing
-         itself refers to and drop only the decorative ones. */
-      try {
-        clone.removeAttribute?.('data-slot');
-      } catch {
-        /* best effort */
-      }
-      const referenced = new Set();
-      const rememberRefs = (element) => {
-        if (element === null || element === undefined) return;
-        const names = [];
-        for (const key of ['href', 'xlink:href']) {
-          const value = element.getAttribute?.(key);
-          if (typeof value === 'string') names.push(value);
-        }
-        const style = element.getAttribute?.('style');
-        if (typeof style === 'string') names.push(style);
-        for (const value of element.getAttributeNames?.() ?? []) {
-          if (value === 'href' || value === 'xlink:href' || value === 'style') continue;
-          const raw = element.getAttribute?.(value);
-          if (typeof raw === 'string') names.push(raw);
-        }
-        for (const raw of names) {
-          for (const match of raw.matchAll(/(?:#|url\()["']?([A-Za-z_][\w.:-]*)/g)) referenced.add(match[1]);
-        }
-      };
-      /* Walk children instead of querySelectorAll: the selector engine is not
-         guaranteed on every node a browser hands back, and a missed child here
-         would drop an id that an icon's <use> still points at. */
-      const eachNode = (root, visit) => {
-        const stack = [root];
-        while (stack.length > 0) {
-          const current = stack.pop();
-          if (current === null || current === undefined) continue;
-          visit(current);
-          const kids = current.children;
-          if (kids === undefined || kids === null) continue;
-          for (const kid of Array.from(kids)) stack.push(kid);
-        }
-      };
-      eachNode(clone, rememberRefs);
-      const dropId = (element) => {
-        const name = element?.getAttribute?.('id');
-        if (typeof name !== 'string' || name === '') return;
-        if (referenced.has(name)) return;
-        try {
-          element.removeAttribute('id');
-        } catch {
-          /* best effort */
-        }
-      };
-      eachNode(clone, dropId);
-      return clone;
-    }
-
-    /** Remember one panel's glyph while its row is still rendered. */
-    function captureMoreGlyph(panelId, row) {
-      const id = String(panelId ?? '');
-      if (id === '') return null;
-      const cached = moreGlyphs.get(id) ?? null;
-      if (cached !== null) return cached;
-      const clone = glyphCloneOf(row);
-      if (clone === null) return null;
-      moreGlyphs.set(id, clone);
-      return clone;
-    }
-
-    /** Drop every remembered glyph (teardown, and tests). */
-    function clearMoreGlyphs() {
-      moreGlyphs.clear();
-    }
-
-    /**
-     * Copy the host's own panel glyph into one of our menu rows. The icon is the
-     * first child of `span[class*="panelGlyph"]` inside the panel row — cloned at
-     * runtime, never shipped here, so a host redesign keeps working. The
-     * placeholder is emptied first, which makes the host remounting the menu
-     * idempotent; a missing glyph leaves it empty and returns false (silent).
-     */
-    function mountMoreGlyph(placeholder, doc, label, panelId) {
-      if (placeholder === null || placeholder === undefined) return false;
-      try {
-        while (placeholder.firstChild !== null && placeholder.firstChild !== undefined) {
-          placeholder.removeChild(placeholder.firstChild);
-        }
-      } catch {
-        /* a placeholder we cannot clear is left as it is */
-      }
-      const row = panelRowOf(doc, label);
-      /* A live row is the freshest source and also refreshes the memory; once the
-         host pins a panel away its row disappears, so the remembered clone is what
-         keeps the icon in our menu. */
-      let source = null;
-      if (row !== null) {
-        const fresh = glyphCloneOf(row);
-        if (fresh !== null) {
-          moreGlyphs.set(String(panelId ?? label), fresh);
-          source = fresh;
-        }
-      }
-      if (source === null) source = moreGlyphs.get(String(panelId ?? label)) ?? null;
-      if (source === null) return false;
-      let clone = null;
-      try {
-        clone = typeof source.cloneNode === 'function' ? source.cloneNode(true) : null;
-      } catch {
-        clone = null;
-      }
-      if (clone === null) return false;
-      try {
-        placeholder.appendChild(clone);
-      } catch {
-        return false;
-      }
-      return true;
-    }
-
-    /**
-     * Hide the panel rows that belong behind the More button. The host keeps its
-     * pins in memory only and re-renders rows on every store change, so this pass
-     * is idempotent, re-applied by the observer after every host redraw, and
-     * undone on teardown. Rows are matched by the same aria-label / title the host
-     * renders; a row we cannot identify is left alone (silent skip).
-     */
-    function applyFoldState(doc, panels, settings, storageRef, touched) {
-      if (doc === null || typeof doc.querySelectorAll !== 'function') return;
-      const folded = new Set(foldedIdsOf(panels, settings, storageRef));
-      const byLabel = new Map();
-      for (const panel of panels) byLabel.set(panel.label, panel.id);
-      let rows = [];
-      try {
-        rows = Array.from(doc.querySelectorAll('nav[class*="panelList"] button[class*="panelRow"]'));
-      } catch {
-        rows = [];
-      }
-      for (const row of rows) {
-        const label = row.getAttribute?.('aria-label') ?? '';
-        let titleText = '';
-        if (typeof row.querySelector === 'function') {
-          try {
-            const title = row.querySelector('span[class*="panelTitle"]');
-            if (title !== null && title !== undefined) titleText = title.textContent ?? '';
-          } catch {
-            titleText = '';
-          }
-        }
-        const id = byLabel.get(label) ?? byLabel.get(titleText) ?? null;
-        if (id === null) continue;
-        /* Remember the icon before this row can disappear from the sidebar. */
-        captureMoreGlyph(id, row);
-        const hide = folded.has(id);
-        /* Hide whatever actually wraps both the icon and the text; a bare row button
-           is the normal case, a wrapper is used when the host draws the glyph beside
-           the button. `nav` is never hidden. */
-        const unit = foldUnitOf(row);
-        if (unit === null) continue;
-        const current = unit.style?.display ?? '';
-        if (hide === true && current !== 'none') {
-          if (touched.has(unit) === false) touched.set(unit, current);
-          unit.style.display = 'none';
-        } else if (hide === false) {
-          for (const candidate of [unit, row, row.parentElement ?? null]) {
-            if (candidate === null || candidate === undefined) continue;
-            if (touched.has(candidate) === true) {
-              candidate.style.display = touched.get(candidate);
-              touched.delete(candidate);
-            }
-          }
-        }
-      }
-    }
-
-    /**
-     * Sample a real host menu item so our rows can borrow its look: the class list
-     * is copied at runtime (never hardcoded) and the fixed dimensions are read from
-     * getComputedStyle. Returns null when the menu is not open yet or the host item
-     * is missing — callers fall back to their own class until it appears.
-     */
-    function sampleMoreItem(doc) {
-      if (doc === null || typeof doc.querySelectorAll !== 'function') return null;
-      const view = doc.defaultView;
-      if (view === undefined || view === null || typeof view.getComputedStyle !== 'function') return null;
-      let menu = null;
-      try {
-        menu = doc.querySelector('[class*="moreMenu"]');
-      } catch {
-        menu = null;
-      }
-      if (menu === null || menu === undefined) return null;
-      let host = null;
-      try {
-        host =
-          Array.from(menu.querySelectorAll('button')).find((button) => {
-            const cls = button.getAttribute?.('class') ?? '';
-            return cls.includes('uic-') === false;
-          }) ?? null;
-      } catch {
-        host = null;
-      }
-      if (host === null) return null;
-      const cs = view.getComputedStyle(host);
-      if (cs === null || cs === undefined) return null;
-      const pick = (name) => {
-        if (typeof cs.getPropertyValue === 'function') return cs.getPropertyValue(name) ?? '';
-        return cs[name] ?? '';
-      };
-      return {
-        className: host.getAttribute?.('class') ?? '',
-        style: {
-          height: pick('height'),
-          lineHeight: pick('line-height'),
-          paddingLeft: pick('padding-left'),
-          paddingRight: pick('padding-right'),
-          fontSize: pick('font-size'),
-          borderRadius: pick('border-radius'),
-          color: pick('color'),
-        },
-      };
-    }
-
-    /** ids currently behind the More button: foldAll wins, else the record. */
-    function desiredFoldIds(entries, settings, storage) {
-      const ids = entries.map((entry) => entry.id);
-      if (settings?.sidebarMore?.foldAll === true) return computeFold(ids, settings);
-      return cleanFolded(readSidebarMore(storage).folded, ids);
-    }
-
-    /**
-     * The actions a replay would need to take: fold every live entry that is
-     * currently pinned but should be behind More. The host's setPinned is
-     * idempotent (it no-ops on an unchanged pin), so replay is safe to repeat.
-     */
-    function sidebarMoreReplay(entries, settings, storage) {
-      const wanted = new Set(desiredFoldIds(entries, settings, storage));
-      return entries.filter((entry) => entry.pinned === true && wanted.has(entry.id)).map((entry) => entry.id);
-    }
-
-    /** Write one panel's pin through the host callback and keep the record honest. */
-    function writeSidebarPin(id, pinned, entries, settings, storage) {
-      if (sidebarWrite === null) return;
-      sidebarWrite(id, pinned);
-      const ids = entries.map((entry) => entry.id);
-      const record = cleanFolded(readSidebarMore(storage).folded, ids);
-      const next = pinned ? record.filter((entry) => entry !== id) : record.includes(id) ? record : [...record, id];
-      writeSidebarMore(storage, next);
-    }
-
-    /**
-     * The More menu rows. Rendered by the host inside its own Menu portal; we own
-     * nothing but these rows. position:fixed is forbidden here (the portal may
-     * be anywhere); the host handles placement.
-     */
-    function SidebarMoreMenu(props) {
-      const entries = Array.isArray(props.entries) ? props.entries : [];
-      const onOpen = typeof props.onOpen === 'function' ? props.onOpen : () => {};
-      const onDismiss = typeof props.onDismiss === 'function' ? props.onDismiss : () => {};
-      const write = typeof props.onPinnedChange === 'function' ? props.onPinnedChange : null;
-      const t = translator(localeScope());
-      sidebarWrite = write;
-      sidebarPanels = entries.map((entry) => entry.id);
-      const settings = readSettings();
-      const storageRef = storage();
-      const record = readSidebarMore(storageRef).folded;
-      const ids = entries.map((entry) => entry.id);
-      const doc = typeof document === 'undefined' ? null : document;
-      const [sampled, setSampled] = React.useState(null);
-
-      /* First render: fold whatever the record / foldAll asks for. The host
-         re-renders the menu with the new pins, and its guard makes the second
-         pass a no-op, so deferring to a microtask keeps us out of the render
-         cycle. */
-      if (write !== null && sidebarReplayQueued === false) {
-        sidebarReplayQueued = true;
-        if (typeof setTimeout === 'function') {
-          setTimeout(() => {
-            for (const id of sidebarMoreReplay(entries, readSettings(), storageRef)) write(id, false);
-          }, 0);
-        } else {
-          for (const id of sidebarMoreReplay(entries, settings, storageRef)) write(id, false);
-        }
-      }
-
-      /* The host menu items share this list, so borrowing their class list is what
-         makes our rows look host-drawn. The sample cannot wait for a setTimeout
-         tick: that painted the fallback row for one frame and the switch was
-         visible. React runs ref callbacks after the whole menu is in the DOM and
-         before the browser paints, so the first row's ref takes the sample there
-         and the fallback class never reaches the screen. */
-      const ensureSample = () => {
-        if (sampled !== null) return true;
-        const taken = sampleMoreItem(doc);
-        if (taken === null) return false;
-        setSampled(taken);
-        return true;
-      };
-
-      /**
-       * Flip one panel. `folded` is the state the row is showing: true means the
-       * panel is behind More right now, which may be foldAll talking rather than
-       * the record — so freeing it also has to switch foldAll off, and folding it
-       * back is a plain record write. Both branches leave the record consistent
-       * with what the row will show on the next pass.
-       */
-      const flipPanel = (id, folded) => {
-        const ids = entries.map((item) => item.id);
-        if (folded === false) {
-          writeSidebarPin(id, false, entries, settings, storageRef);
-          return;
-        }
-        const onlyOutside = ids.filter((item) => item !== 'plugins' && item !== id);
-        /* Ask the host to put this row outside first — folding is derived from
-           foldAll and the record, so skipping the host call leaves the panel
-           hidden by the host's own pin state and it never comes back. */
-        writeSidebarPin(id, true, entries, settings, storageRef);
-        writeSettings({ ...readSettings(), sidebarMore: { foldAll: false } });
-        writeSidebarMore(storageRef, cleanFolded(onlyOutside, ids));
-      };
-
-      const wanted = new Set(desiredFoldIds(entries, settings, storageRef));
-      const rowClass = sampled !== null && sampled.className !== '' ? sampled.className : 'uic-moreRow';
-      const rowStyle = sampled !== null
-        ? { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', width: '100%', boxSizing: 'border-box' }
-        : null;
-
-      return node('div', { key: 'more', 'data-uic-sidebar-more-menu': '1' }, [
-        ...entries.map((entry) => {
-          const folded = wanted.has(entry.id);
-          return node('button', {
-            key: entry.id,
-            type: 'button',
-            className: rowClass,
-            style: rowStyle,
-            ref: ensureSample,
-            'data-uic-more-row': entry.id,
-            onClick: () => { onOpen(entry.id); onDismiss(); },
-          }, [
-            node('span', { key: 'main', className: 'uic-moreRowMain' }, [
-              node('span', {
-                key: 'glyph',
-                className: 'uic-moreGlyph',
-                'data-uic-more-glyph': entry.id,
-                /* The host owns the icon: copy it from the live sidebar row once this
-                   placeholder is in the document. Refilled on every mount, so a host
-                   remount cannot stack copies. */
-                ref: (element) => {
-                  if (element === null || element === undefined) return;
-                  mountMoreGlyph(element, doc, entry.label, entry.id);
-                },
-              }, []),
-              node('span', { key: 'name', className: 'uic-moreRowName' }, entry.label),
-            ]),
-            node('span', {
-              key: 'toggle',
-              className: 'uic-moreToggle',
-              'data-uic-more-pin': entry.id,
-              role: 'button',
-              tabIndex: 0,
-              onClick: (event) => {
-                event.stopPropagation();
-                flipPanel(entry.id, folded);
-              },
-              onKeyDown: (event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  flipPanel(entry.id, folded);
-                }
-              },
-            }, folded === true ? t('settings.sidebarMore.unfold') : t('settings.sidebarMore.fold')),
-          ]);
-        }),
-      ]);
-    }
-
-    /** Restore the host's own launcher label. Older builds painted a folded count
-     * onto the title span ("更多 (2)"); the counter is gone now, so this pass makes
-     * sure the span always reads exactly what the aria-label says. Idempotent: it
-     * only writes when the text differs, and it never adds a number itself.
-     */
-    function normalizeMoreTitle(doc) {
-      if (doc === null || typeof doc.querySelectorAll !== 'function') return;
-      let candidates = [];
-      try {
-        candidates = Array.from(doc.querySelectorAll('button[aria-label="更多"], button[aria-label="More"]'));
-      } catch {
-        candidates = [];
-      }
-      const launcher = candidates.find((button) => {
-        if (button.getAttribute === undefined) return false;
-        if (MORE_TITLES.has(button.getAttribute('aria-label')) === false) return false;
-        let parent = button.parentElement ?? null;
-        while (parent !== null) {
-          const cls = parent.getAttribute?.('class') ?? '';
-          if (cls.includes('panelList')) return true;
-          parent = parent.parentElement;
-        }
-        return false;
-      });
-      if (launcher === undefined) return;
-      let title = null;
-      if (typeof launcher.querySelector === 'function') {
-        try {
-          title = launcher.querySelector('span[class*="panelTitle"]');
-        } catch {
-          title = null;
-        }
-      }
-      if (title === null || title === undefined) return;
-      const base = launcher.getAttribute('aria-label') ?? '';
-      if (title.textContent !== base) title.textContent = base;
-    }
 
     /**
      * Wheel damping for the chat scroller.
@@ -2625,61 +1978,6 @@ window.__ModuleLoader__.load({
 
       const inventory = () => slotRows(entriesOf, readSettings(), runtimeCatalog(slots));
 
-      const sidebarPanelsOf = () =>
-        entriesOf('sidebar.panellist')
-          .map((entry) => ({ id: String(entry?.options?.id ?? ''), label: entryLabelOf(entry) }))
-          .filter((panel) => panel.id !== '');
-      const normalizeTitle = () => normalizeMoreTitle(doc);
-      const applyFold = () => applyFoldState(doc, sidebarPanelsOf(), readSettings(), storage(), moreTouched);  ctx.effect(() => () => clearMoreGlyphs(), 'ui-controller: forget sampled glyphs');
-
-      /* One slot only, and only after it is declared: the inject callback itself
-         only fires once the host declares the slot, so the guard is belt and
-         braces (dsh-plugin-dev §13). */
-      ctx.effect(
-        () =>
-          ctx.slots.inject(SIDEBAR_MORE_SLOT, () => {
-            if (typeof ctx.slots.spec === 'function' && ctx.slots.spec(SIDEBAR_MORE_SLOT) === undefined) return () => {};
-            return ctx.slots.register(
-              {
-                name: SIDEBAR_MORE_SLOT,
-                id: SIDEBAR_MORE_ID,
-                order: SIDEBAR_MORE_ORDER,
-                locale: NS,
-                label: () => t('settings.sidebarMore.title'),
-              },
-              (props) => h(SidebarMoreMenu, props),
-            );
-          }),
-        'ui-controller: sidebar more',
-      );
-
-      /* Host pins are memory-only; a reload loses them. The record replays through
-         the write entry captured by the menu (null until the menu has rendered
-         once), so subscribe on every panellist change and try. */
-      if (typeof slots?.subscribe === 'function') {
-        ctx.effect(() => slots.subscribe('sidebar.panellist', () => {
-          const write = sidebarWrite;
-          if (write === null) return;
-          const settings = readSettings();
-          const entries = sidebarPanels.map((panel) => ({ id: panel.id, pinned: true }));
-          for (const id of sidebarMoreReplay(entries, settings, storage())) write(id, false);
-        }), 'ui-controller: sidebar more replay');
-      }
-
-      /* Count label: an observer catches the launcher appearing/re-rendering, and
-         the 2s pass below is the fallback. */
-      let moreObserver = null;
-      if (doc !== null && typeof doc.body?.addEventListener === 'function' && typeof MutationObserver === 'function') {
-        try {
-          moreObserver = new MutationObserver(() => { applyFold(); normalizeTitle(); });
-          moreObserver.observe(doc.body, { childList: true, subtree: true });
-        } catch {
-          moreObserver = null;
-        }
-      }
-      applyFold();
-      normalizeTitle();
-
       let pickHandler = null;
 
       const applyHidden = () => {
@@ -2725,13 +2023,6 @@ window.__ModuleLoader__.load({
 
       injectStyle(doc);
       ctx.effect(() => () => {
-        if (moreObserver !== null && typeof moreObserver.disconnect === 'function') moreObserver.disconnect();        for (const [row, original] of moreTouched) {
-          if (row.style !== undefined) row.style.display = original;
-        }
-        moreTouched.clear();
-        sidebarWrite = null;
-        sidebarPanels = [];
-        sidebarReplayQueued = false;
         stopPicking();
         chatDamping.stop('teardown');
         removeStyle(doc);
@@ -2756,8 +2047,6 @@ window.__ModuleLoader__.load({
         const current = readSettings();
         applyHidden();
         applyVisualOrder(doc, current, ordered);
-        applyFold();
-        normalizeTitle();
         chatDamping.sync(current);
       };  applyAll();
       const timer = setInterval(applyAll, 2000);
@@ -2872,28 +2161,6 @@ window.__ModuleLoader__.load({
       isOpen,
       toggleOpen,
       resetOpen,
-      SIDEBAR_MORE_KEY,
-      SIDEBAR_MORE_SLOT,
-      SIDEBAR_MORE_ID,
-      SIDEBAR_MORE_MODAL,
-      readSidebarMore,
-      writeSidebarMore,
-      cleanFolded,
-      computeFold,
-      sidebarMoreReplay,
-      normalizeMoreTitle,
-      glyphCloneOf,      glyphCloneOf,
-      desiredFoldIds,
-      foldedIdsOf,
-      entryLabelOf,
-      applyFoldState,
-  clearMoreGlyphs,
-  foldUnitOf,
-  glyphIconNodeOf,
-  mountMoreGlyph,
-  panelRowOf,
-      sampleMoreItem,
-      SidebarMoreMenu,
       DICTS,
       CHAT_SCROLL_SELECTOR,
       CHAT_SCROLL_K,

@@ -65,29 +65,7 @@ is missing, this is the plugin that answers that.
 5. **Presets.** Hide-marks and visual order can be captured as named presets, applied,
    and deleted; storage follows the same rules as `better-notice` (unknown keys are
    preserved, user changes are marked, upgrades do not overwrite).
-6. **Left column: folded panels behind the More button.** The session list on the
-   home page keeps only `plugins` and the "More" launcher in the left column; every
-   other panel is folded behind it. The host's own pin state is in-memory only, so
-   this plugin persists the folded ids itself (`dsh.uic.sidebarMore.v1` →
-   `{ folded: string[] }`) and replays them every time the menu opens or the panel
-   list changes. Folded ids are cleaned against the live panel set on every read,
-   and `sidebarMore.foldAll` (default **on**) decides the shape for fresh installs;
-   with it off, only the ids already in the record are folded. The "More" button
-   label gains a count (`更多 (3)`) painted in place, only when the number changes.
-   The menu itself is one entry in `sidebar.panellist.actions`: it renders one
-   row per panel with a single per-row toggle (folds / restores through the
-   host's `onPinnedChange` and mirrors the record). There are no bulk buttons in
-   the menu — `sidebarMore.foldAll` on the settings page is the only bulk switch.
-   Rows copy the look of a real host menu item at runtime (class list plus
-   `getComputedStyle` height / padding / font / radius / colour); nothing is
-   hardcoded, and if no host item is on screen our own class is used until one
-   appears. Folding itself is a `display:none` pass over
-   `nav[class*="panelList"] button[class*="panelRow"]`, matched by
-   `aria-label` / title, re-applied by a MutationObserver, and undone on
-   teardown; a row we cannot identify is left alone. Nothing else is touched: no
-   custom panel rows, no icon replacement, and the settings dialog's own nav
-   width is left alone.
-7. **Chat scrolling: wheel damping.** A wheel over the chat pane is eased instead of
+6. **Chat scrolling: wheel damping.** A wheel over the chat pane is eased instead of
    jumping: each tick is normalised (`deltaMode` 0 px / 1 ×16 px per line / 2 ×90% of
    the viewport), added to a target `scrollTop`, and stepped toward it in
    `requestAnimationFrame` with an exponential factor. Strength 1–5 maps to
@@ -202,7 +180,7 @@ Two sentences that belong in any answer about ordering:
 node --check client.js
 node --check index.js
 node --check test/classify.test.mjs
-node test/classify.test.mjs        # expect: PASS — 44 groups
+node test/classify.test.mjs        # expect: PASS — 35 groups
 node ..\..\cangku\tmp\261114_gate_ui_controller.mjs   # static gate, separate script
 ```
 
@@ -216,51 +194,25 @@ with the old `order` alias, and the zh/en dictionary parity. The grouped page ha
 its own groups: entries group under their slot with empty seats in their own zone,
 the three filters count what they keep, folding starts closed and survives a
 re-render, and the static fallback still draws slot heads when no live snapshot is
-available. The sidebar-more behaviour has groups of its own: replay folds only
-what the record and `foldAll` ask for; the launcher carries no number at all — the counter is gone, and a
-stale count painted by an older build is normalised back to the bare label on
-every pass; the first frame of the menu already carries the host row look (the
-sample is taken in the row ref, before the browser paints, so the fallback
-class never reaches the screen and the old bordered fallback style is gone);
-folding hides the live rows and restores them on the way out,
-leaving rows it cannot identify alone; and
-the menu borrows a live host item's class list and computed size instead of any
-hardcoded name; each menu row copies the panel glyph from the live sidebar row
-(runtime clone taken from the drawing inside the host's slot anchor, ids and
-`data-slot` stripped, refilled on every mount, remembered per panel so a folded
-panel keeps its icon after the host stops rendering its row) and folding hides
-the wrapper that owns both the icon and the text, never `nav`.
+available.
 
 ## Known limits
 
-1. **Folded/unfolded is in-memory.** Reloading the page folds everything again. The
-   point of folding is to get back to the list quickly; persisting it would mean
-   another storage key to migrate, and the filters already narrow the page to
-   three or four rows.
-2. **No entry→DOM mapping.** The slots core renders entries itself and marks
+1. **No entry→DOM mapping.** The slots core renders entries itself and marks
    nothing, so binding is manual. Rows without a binding show "cannot locate" with
    the reason instead of a control that does nothing.
-3. **Hiding is not unloading.** A hidden entry still runs. If it is expensive, this
+2. **Hiding is not unloading.** A hidden entry still runs. If it is expensive, this
    plugin is not the tool — talk to the plugin's author.
-4. **Visual order is CSS only.** It applies inside one flex/grid parent; a child of
+3. **Visual order is CSS only.** It applies inside one flex/grid parent; a child of
    a `display: contents` or block parent is skipped, and nothing outside our bound
    elements is touched.
-5. **Hash class names change every build.** Nothing here keys off them; only
+4. **Hash class names change every build.** Nothing here keys off them; only
    `data-*`, `role`, `aria-label`, `name` and `id` are used to build selectors.
-6. **`root` is off limits.** Listing it is fine; registering into it is not.
-7. **`registrant` is an inference.** The live value (`entry.registrant`) is only
+5. **`root` is off limits.** Listing it is fine; registering into it is not.
+6. **`registrant` is an inference.** The live value (`entry.registrant`) is only
    readable at runtime for entries present in the registry; the column shows the
    static proxy scanned out of the shipped bundles, so an entry registered by code
    that ships no literal key can read as "—".
-8. **The More menu coexists with other action entries.** The host renders every
-   registration of `sidebar.panellist.actions` into the same menu; when another
-   plugin (for example the codex-ui skin on the desktop profile) also contributes
-   there, the two menus share the popup. This plugin does not remove or reorder
-   other entries.
-9. **Replay is best-effort against the host's in-memory pins.** The host keeps its
-   own `unpinned` list only for the session; a folded id is re-hidden when the host
-   honours the pin callback, and a host restart resets the host list while this
-   plugin's record is replayed on the next menu open or panel-list change.
 
 ## License
 
